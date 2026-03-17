@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { getSupabaseBrowser } from '@/lib/supabase'
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard', icon: '📊' },
@@ -14,7 +15,18 @@ const NAV_ITEMS = [
 
 export function Navigation() {
   const pathname = usePathname()
+  const router = useRouter()
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Não mostrar nav na página de login
+  if (pathname === '/login') return null
+
+  const handleLogout = async () => {
+    const supabase = getSupabaseBrowser()
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
 
   return (
     <>
@@ -40,6 +52,15 @@ export function Navigation() {
             </Link>
           ))}
         </nav>
+        <div className="px-2 py-4 border-t border-slate-700">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors w-full"
+          >
+            <span className="text-base">🚪</span>
+            Sair
+          </button>
+        </div>
       </aside>
 
       {/* Top bar mobile */}
