@@ -70,7 +70,7 @@ export function parseExcel(buffer: ArrayBuffer): ParseResult {
       continue
     }
 
-    const row = parseRow(raw, i)
+    const row = parseRow(raw)
     if (row) {
       allRows.push(row)
     }
@@ -113,7 +113,7 @@ export function parseExcel(buffer: ArrayBuffer): ParseResult {
 /**
  * Parseia uma linha do Excel para VendaInput.
  */
-function parseRow(raw: Record<string, unknown>, index: number): VendaInput | null {
+function parseRow(raw: Record<string, unknown>): VendaInput | null {
   try {
     const vendaNumero = toNumber(raw['Venda Nº'])
     if (vendaNumero === null || isNaN(vendaNumero)) {
