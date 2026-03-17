@@ -2,6 +2,12 @@
 -- DashWT — Schema SQL
 -- Dashboard Executivo de Vendas · Welcome Trips
 -- =============================================================
+-- NOTA: Venda Nº é o número do pedido, não um ID único por linha.
+-- Um pedido pode ter múltiplos itens/produtos. A chave primária
+-- é um SERIAL auto-incremento. Deduplicação é por upload:
+-- a cada novo upload, os registros do upload anterior são
+-- substituídos (delete + insert), garantindo estado atualizado.
+-- =============================================================
 
 -- Tabela: uploads (DEVE ser criada antes de vendas por causa da FK)
 CREATE TABLE IF NOT EXISTS uploads (
@@ -16,9 +22,10 @@ CREATE TABLE IF NOT EXISTS uploads (
 );
 
 -- Tabela: vendas
--- Chave primária: venda_numero (deduplicação via upsert)
+-- Cada linha = um item/produto de um pedido (venda_numero)
 CREATE TABLE IF NOT EXISTS vendas (
-  venda_numero    INTEGER PRIMARY KEY,
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  venda_numero    INTEGER NOT NULL,
   vendedor        TEXT NOT NULL,
   data_venda      DATE NOT NULL,
   pagante         TEXT NOT NULL,
@@ -37,6 +44,7 @@ CREATE TABLE IF NOT EXISTS vendas (
 CREATE INDEX IF NOT EXISTS idx_vendas_data ON vendas(data_venda);
 CREATE INDEX IF NOT EXISTS idx_vendas_setor ON vendas(setor_grupo);
 CREATE INDEX IF NOT EXISTS idx_vendas_upload ON vendas(upload_id);
+CREATE INDEX IF NOT EXISTS idx_vendas_numero ON vendas(venda_numero);
 
 -- Tabela: metas
 -- Constraint única: exatamente uma meta por (ano, mês, setor)

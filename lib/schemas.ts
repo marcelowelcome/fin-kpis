@@ -47,7 +47,8 @@ export const COLUNAS_OBRIGATORIAS = [
 // =============================================================
 
 export interface Venda {
-  venda_numero: number
+  id: number // BIGINT auto-incremento (PK)
+  venda_numero: number // Nº do pedido (não único por linha — um pedido pode ter N itens)
   vendedor: string
   data_venda: string // ISO date string (YYYY-MM-DD)
   pagante: string

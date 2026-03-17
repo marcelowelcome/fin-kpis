@@ -87,11 +87,11 @@ export function parseExcel(buffer: ArrayBuffer): ParseResult {
     })
   }
 
-  // Resolver duplicatas internas (manter última ocorrência)
-  const deduped = deduplicateRows(allRows)
+  // NOTA: NÃO deduplicar por venda_numero — um pedido pode ter N itens.
+  // Todas as linhas são mantidas.
 
   // Análise de qualidade
-  const qualityResult = analyzeQuality(deduped)
+  const qualityResult = analyzeQuality(allRows)
 
   // Merge alertas de linhas nulas com alertas de qualidade
   const allAlerts = [...extraAlerts, ...qualityResult.alerts]
@@ -103,7 +103,7 @@ export function parseExcel(buffer: ArrayBuffer): ParseResult {
   )
 
   return {
-    rows: deduped,
+    rows: allRows,
     alerts: allAlerts,
     totalLinhas,
     score: adjustedScore,
@@ -176,17 +176,6 @@ function isNullRow(raw: Record<string, unknown>): boolean {
     const val = raw[col]
     return val === null || val === undefined || val === ''
   })
-}
-
-/**
- * Remove duplicatas internas mantendo a última ocorrência de cada venda_numero.
- */
-function deduplicateRows(rows: VendaInput[]): VendaInput[] {
-  const map = new Map<number, VendaInput>()
-  for (const row of rows) {
-    map.set(row.venda_numero, row)
-  }
-  return Array.from(map.values())
 }
 
 // =============================================================

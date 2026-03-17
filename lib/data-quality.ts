@@ -59,20 +59,22 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
     })
   }
 
-  // --- Duplicatas internas (venda_numero repetido no arquivo) ---
-  const vendaNumeros = new Map<number, number[]>()
+  // --- Duplicatas internas (linhas completamente idênticas no arquivo) ---
+  // NOTA: venda_numero repetido é ESPERADO (um pedido pode ter N itens/produtos).
+  // Duplicata real = mesma combinação de venda_numero + produto + valor_total + faturamento.
+  const rowKeys = new Map<string, number[]>()
   rows.forEach((row, i) => {
-    const existing = vendaNumeros.get(row.venda_numero)
+    const key = `${row.venda_numero}|${row.produto}|${row.valor_total}|${row.faturamento}`
+    const existing = rowKeys.get(key)
     if (existing) {
       existing.push(i)
     } else {
-      vendaNumeros.set(row.venda_numero, [i])
+      rowKeys.set(key, [i])
     }
   })
   const duplicataLinhas: number[] = []
-  vendaNumeros.forEach((indices) => {
+  rowKeys.forEach((indices) => {
     if (indices.length > 1) {
-      // Todas as ocorrências exceto a última (que será mantida)
       duplicataLinhas.push(...indices.slice(0, -1))
     }
   })
@@ -80,9 +82,9 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
   if (duplicataLinhas.length > 0) {
     alerts.push({
       tipo: 'DUPLICATA_INTERNA',
-      severidade: 'CRITICO',
+      severidade: 'ATENCAO',
       quantidade: duplicataLinhas.length,
-      descricao: `${duplicataLinhas.length} duplicata(s) interna(s) no arquivo`,
+      descricao: `${duplicataLinhas.length} linha(s) possivelmente duplicada(s) no arquivo`,
       linhas_afetadas: duplicataLinhas,
     })
   }
