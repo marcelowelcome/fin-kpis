@@ -3,6 +3,8 @@ import { getSupabaseServer } from '@/lib/supabase'
 import { MetaInputSchema } from '@/lib/schemas'
 import type { ApiError } from '@/lib/schemas'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/metas?ano=2026
  */
@@ -72,6 +74,7 @@ export async function POST(request: NextRequest) {
           mes: m.mes,
           setor_grupo: m.setor_grupo,
           fat_meta: m.fat_meta,
+          receita_meta_pct: m.receita_meta_pct ?? 0,
           updated_at: new Date().toISOString(),
         })),
         { onConflict: 'ano,mes,setor_grupo' }

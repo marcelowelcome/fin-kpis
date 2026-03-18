@@ -3,6 +3,8 @@ import { getSupabaseServer } from '@/lib/supabase'
 import { parseExcel, isParseError } from '@/lib/excel-parser'
 import type { UploadResponse, ApiError, VendaInput } from '@/lib/schemas'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     // 1. Extrair arquivo do FormData
@@ -42,35 +44,54 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabaseServer()
 
-    // 3. Identificar quais venda_numero estão no arquivo
-    //    e contar quantos registros existentes serão substituídos
-    const vendaNumeros = Array.from(new Set(rows.map((r) => r.venda_numero)))
+    // 3. Detectar o range de datas do arquivo (min/max data_venda)
+    const dates = rows.map((r) => r.data_venda).sort()
+    const minDate = dates[0]
+    const maxDate = dates[dates.length - 1]
 
-    // Contar registros existentes que serão substituídos
+    // 4. Deletar TODAS as vendas no mesmo range de datas + seus uploads órfãos
+    //    Isso garante que o novo upload substitui completamente os dados do período,
+    //    sem interferir em uploads de outros períodos.
     const { count: existingCount } = await supabase
       .from('vendas')
       .select('*', { count: 'exact', head: true })
-      .in('venda_numero', vendaNumeros)
+      .gte('data_venda', minDate)
+      .lte('data_venda', maxDate)
 
     const atualizadas = existingCount ?? 0
-    // Novos = venda_numero que não existem no banco
-    // Mas como um pedido pode ter N itens, contamos linhas inseridas como total
-    const inseridas = rows.length
 
-    // 4. Deletar registros existentes para os venda_numero que estão no arquivo
-    //    Isso garante que dados atualizados substituem os antigos
     if (atualizadas > 0) {
-      // Deletar em lotes (IN clause tem limite)
-      const BATCH_SIZE = 500
-      for (let i = 0; i < vendaNumeros.length; i += BATCH_SIZE) {
-        const batch = vendaNumeros.slice(i, i + BATCH_SIZE)
-        const { error: deleteError } = await supabase
-          .from('vendas')
-          .delete()
-          .in('venda_numero', batch)
+      // Identificar uploads que ficarão órfãos (todas as vendas no range serão deletadas)
+      const { data: affectedUploads } = await supabase
+        .from('vendas')
+        .select('upload_id')
+        .gte('data_venda', minDate)
+        .lte('data_venda', maxDate)
 
-        if (deleteError) {
-          return jsonError('DB_ERROR', `Erro ao limpar dados existentes: ${deleteError.message}`, 500)
+      const affectedUploadIds = Array.from(new Set(
+        (affectedUploads ?? []).map((v) => v.upload_id).filter(Boolean)
+      ))
+
+      // Deletar vendas no range de datas
+      const { error: deleteError } = await supabase
+        .from('vendas')
+        .delete()
+        .gte('data_venda', minDate)
+        .lte('data_venda', maxDate)
+
+      if (deleteError) {
+        return jsonError('DB_ERROR', `Erro ao limpar dados existentes: ${deleteError.message}`, 500)
+      }
+
+      // Limpar uploads que ficaram sem vendas (órfãos)
+      for (const uid of affectedUploadIds) {
+        const { count: remaining } = await supabase
+          .from('vendas')
+          .select('*', { count: 'exact', head: true })
+          .eq('upload_id', uid)
+
+        if (remaining === 0) {
+          await supabase.from('uploads').delete().eq('id', uid)
         }
       }
     }
@@ -84,7 +105,7 @@ export async function POST(request: NextRequest) {
       .insert({
         nome_arquivo: file.name,
         total_linhas: totalLinhas,
-        linhas_inseridas: inseridas,
+        linhas_inseridas: rows.length,
         linhas_atualizadas: atualizadas,
         alertas_qualidade: alerts,
         status: uploadStatus,
@@ -125,7 +146,7 @@ export async function POST(request: NextRequest) {
     const response: UploadResponse = {
       uploadId,
       totalLinhas,
-      inseridas,
+      inseridas: rows.length,
       atualizadas,
       alertas: alerts,
       score,

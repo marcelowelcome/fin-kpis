@@ -1,20 +1,24 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
+import { calcScoreFromAlerts } from '@/lib/data-quality'
 import type { ApiError, Upload } from '@/lib/schemas'
+
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 /**
  * GET /api/qualidade — Score agregado e timeline de qualidade dos uploads.
  */
-export async function GET() {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function GET(_request: NextRequest) {
   try {
     const supabase = getSupabaseServer()
 
-    // Buscar os últimos 20 uploads para timeline
     const { data: uploads, error } = await supabase
       .from('uploads')
       .select('id, nome_arquivo, uploaded_at, total_linhas, alertas_qualidade, status')
       .order('uploaded_at', { ascending: false })
-      .limit(20)
+      .limit(50)
 
     if (error) {
       return jsonError('DB_ERROR', error.message, 500)
@@ -28,43 +32,23 @@ export async function GET() {
       })
     }
 
-    // Calcular score para cada upload baseado nos alertas
-    const timeline = (uploads as Upload[]).map((upload) => {
-      const alerts = upload.alertas_qualidade ?? []
-      let score = 100
+    const timeline = (uploads as Upload[]).map((upload) => ({
+      uploadId: upload.id,
+      nomeArquivo: upload.nome_arquivo,
+      uploadedAt: upload.uploaded_at,
+      totalLinhas: upload.total_linhas,
+      score: calcScoreFromAlerts(upload.alertas_qualidade ?? []),
+      alertas: upload.alertas_qualidade ?? [],
+      status: upload.status,
+    }))
 
-      for (const alert of alerts) {
-        switch (alert.tipo) {
-          case 'SETOR_NULO':
-            score -= Math.min(alert.quantidade * 5, 30)
-            break
-          case 'VALOR_NEGATIVO':
-            score -= Math.min(alert.quantidade * 2, 20)
-            break
-          case 'LINHA_NULA':
-            score -= Math.min(alert.quantidade * 1, 10)
-            break
-          case 'DUPLICATA_INTERNA':
-            score -= Math.min(alert.quantidade * 5, 20)
-            break
-        }
-      }
-
-      return {
-        uploadId: upload.id,
-        nomeArquivo: upload.nome_arquivo,
-        uploadedAt: upload.uploaded_at,
-        totalLinhas: upload.total_linhas,
-        score: Math.max(0, score),
-        alertas: alerts,
-        status: upload.status,
-      }
-    })
+    // Cronológico (mais antigo primeiro) sem mutar o array original
+    const cronologico = [...timeline].reverse()
 
     return NextResponse.json({
       ultimoScore: timeline[0]?.score ?? null,
-      timeline: timeline.reverse(), // ordem cronológica
-      ultimoUpload: timeline[timeline.length - 1] ?? null,
+      timeline: cronologico,
+      ultimoUpload: cronologico[cronologico.length - 1] ?? null,
     })
   } catch (err) {
     console.error('Qualidade error:', err)

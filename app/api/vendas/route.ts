@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
 import type { ApiError } from '@/lib/schemas'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/vendas — Listagem filtrada para drill-down.
  *
