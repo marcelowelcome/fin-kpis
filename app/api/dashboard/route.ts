@@ -66,6 +66,7 @@ export async function GET(request: NextRequest) {
         trendVendas: trendVendas as VendaKPI[],
         trendMetasRaw: trendMetas,
         trendTipo,
+        deltaLabel: getDeltaLabel(periodo),
       }
     )
 
@@ -167,6 +168,16 @@ function aggregateMetas(metas: Meta[]): Meta[] {
     }
   }
   return Array.from(map.values())
+}
+
+function getDeltaLabel(periodo: string): string | null {
+  switch (periodo) {
+    case 'semana-atual': return 'vs semana anterior'
+    case 'mes-corrente': return 'vs mês anterior'
+    case 'acumulado-ano': return 'vs mesmo período ano anterior'
+    case 'custom': return 'vs período anterior'
+    default: return null
+  }
 }
 
 function jsonError(code: string, message: string, status: number) {

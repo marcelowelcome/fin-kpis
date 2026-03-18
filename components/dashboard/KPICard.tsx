@@ -18,6 +18,7 @@ interface KPICardProps {
   onClick?: () => void
   accent?: string
   delta?: DeltaData | null
+  deltaLabel?: string | null
   children?: React.ReactNode
 }
 
@@ -35,6 +36,7 @@ export function KPICard({
   onClick,
   accent,
   delta,
+  deltaLabel,
   children,
 }: KPICardProps) {
   if (loading) {
@@ -90,6 +92,9 @@ export function KPICard({
               )}
               {delta.percentual >= 0 ? '+' : ''}
               {(delta.percentual * 100).toFixed(1)}%
+              {deltaLabel && (
+                <span className="text-[10px] font-normal opacity-75 ml-0.5">{deltaLabel}</span>
+              )}
             </span>
           )}
         </div>

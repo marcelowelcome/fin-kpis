@@ -117,6 +117,7 @@ export default function DashboardPage() {
               ticketMedio={data?.consolidado.ticketMedio}
               nVendas={data?.consolidado.nVendas}
               delta={data?.delta?.consolidado}
+              deltaLabel={data?.deltaLabel}
               loading={loading}
               accent="#1e293b"
             />
@@ -150,6 +151,7 @@ export default function DashboardPage() {
                 ticketMedio={data?.corp.ticketMedio}
                 nVendas={data?.corp.nVendas}
                 delta={data?.delta?.corp}
+              deltaLabel={data?.deltaLabel}
                 loading={loading}
                 accent="#3b82f6"
               />
@@ -164,6 +166,7 @@ export default function DashboardPage() {
                 ticketMedio={data?.trips.ticketMedio}
                 nVendas={data?.trips.nVendas}
                 delta={data?.delta?.trips}
+              deltaLabel={data?.deltaLabel}
                 loading={loading}
                 accent="#10b981"
               />
@@ -178,6 +181,7 @@ export default function DashboardPage() {
                 ticketMedio={data?.weddings.ticketMedio}
                 nVendas={data?.weddings.nVendas}
                 delta={data?.delta?.weddings}
+              deltaLabel={data?.deltaLabel}
                 loading={loading}
                 accent="#D4AC0D"
               />
@@ -205,6 +209,7 @@ export default function DashboardPage() {
               ticketMedio={data?.trips.ticketMedio}
               nVendas={data?.trips.nVendas}
               delta={data?.delta?.trips}
+              deltaLabel={data?.deltaLabel}
               loading={loading}
               accent="#10b981"
             >
@@ -251,6 +256,7 @@ export default function DashboardPage() {
               ticketMedio={data?.weddings.ticketMedio}
               nVendas={data?.weddings.nVendas}
               delta={data?.delta?.weddings}
+              deltaLabel={data?.deltaLabel}
               loading={loading}
               accent="#D4AC0D"
             >
@@ -331,6 +337,7 @@ export default function DashboardPage() {
               ticketMedio={data?.corp.ticketMedio}
               nVendas={data?.corp.nVendas}
               delta={data?.delta?.corp}
+              deltaLabel={data?.deltaLabel}
               loading={loading}
               accent="#3b82f6"
             />

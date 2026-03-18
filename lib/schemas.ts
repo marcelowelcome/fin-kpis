@@ -293,6 +293,7 @@ export interface DashboardData {
     trips: DeltaData | null
     weddings: DeltaData | null
   } | null
+  deltaLabel: string | null  // "vs mês anterior", "vs semana anterior", etc.
   ultimaAtualizacao: string | null
 }
 

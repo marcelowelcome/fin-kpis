@@ -71,9 +71,10 @@ export function calcDashboard(
   opts?: {
     vendasAnterior?: VendaKPI[]
     metasRaw?: Meta[]
-    trendVendas?: VendaKPI[] // vendas com range expandido para gráfico de evolução
-    trendMetasRaw?: Meta[]   // metas para o range expandido
+    trendVendas?: VendaKPI[]
+    trendMetasRaw?: Meta[]
     trendTipo?: 'mensal' | 'semanal'
+    deltaLabel?: string | null
   }
 ): DashboardData {
   const getMeta = (setor: SetorMeta): number => {
@@ -183,6 +184,7 @@ export function calcDashboard(
     trend,
     forecast,
     delta,
+    deltaLabel: opts?.deltaLabel ?? null,
     ultimaAtualizacao,
   }
 }

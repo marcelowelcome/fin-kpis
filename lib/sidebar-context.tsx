@@ -1,0 +1,42 @@
+'use client'
+
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+
+interface SidebarState {
+  collapsed: boolean
+  toggle: () => void
+}
+
+const SidebarContext = createContext<SidebarState>({
+  collapsed: false,
+  toggle: () => {},
+})
+
+const STORAGE_KEY = 'dashwt-sidebar-collapsed'
+
+export function SidebarProvider({ children }: { children: ReactNode }) {
+  const [collapsed, setCollapsed] = useState(false)
+
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === 'true') setCollapsed(true)
+  }, [])
+
+  const toggle = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem(STORAGE_KEY, String(next))
+      return next
+    })
+  }
+
+  return (
+    <SidebarContext.Provider value={{ collapsed, toggle }}>
+      {children}
+    </SidebarContext.Provider>
+  )
+}
+
+export function useSidebar() {
+  return useContext(SidebarContext)
+}
