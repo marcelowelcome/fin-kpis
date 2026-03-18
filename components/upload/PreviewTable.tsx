@@ -32,6 +32,7 @@ export function PreviewTable({ rows, totalLinhas }: PreviewTableProps) {
               <th className="px-3 py-2 text-left font-medium text-slate-600">Pagante</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Setor</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Produto</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600">Situacao</th>
               <th className="px-3 py-2 text-right font-medium text-slate-600">Faturamento</th>
               <th className="px-3 py-2 text-right font-medium text-slate-600">Receita</th>
             </tr>
@@ -53,6 +54,19 @@ export function PreviewTable({ rows, totalLinhas }: PreviewTableProps) {
                   </span>
                 </td>
                 <td className="px-3 py-2 max-w-[150px] truncate">{row.produto ?? '-'}</td>
+                <td className="px-3 py-2">
+                  {row.situacao ? (
+                    <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${
+                      row.situacao.toLowerCase() === 'fechada'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {row.situacao}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">-</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right font-mono">{formatBRL(row.faturamento)}</td>
                 <td className="px-3 py-2 text-right font-mono">{formatBRL(row.receitas)}</td>
               </tr>
