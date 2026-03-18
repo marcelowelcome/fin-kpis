@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS vendas (
   valor_total     NUMERIC(12,2) NOT NULL DEFAULT 0,
   receitas        NUMERIC(12,2) DEFAULT 0,
   faturamento     NUMERIC(12,2) DEFAULT 0,
+  situacao        TEXT,                -- 'Aberta' ou 'Fechada' (status da venda)
   upload_id       UUID REFERENCES uploads(id) ON DELETE CASCADE,
   updated_at      TIMESTAMPTZ DEFAULT now()
 );

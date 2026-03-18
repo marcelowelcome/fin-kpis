@@ -136,6 +136,7 @@ function parseRow(raw: Record<string, unknown>): VendaInput | null {
       valor_total: toNumber(raw['Valor Total']) ?? 0,
       receitas: toNumber(raw['Receitas']) ?? 0,
       faturamento: toNumber(raw['Faturamento']) ?? 0,
+      situacao: toStringOrNull(raw['Situação'] ?? raw['Situacao'] ?? raw['situacao']),
     }
   } catch {
     // Linha com dados inválidos — skip
@@ -148,7 +149,11 @@ function parseRow(raw: Record<string, unknown>): VendaInput | null {
  */
 function parseDate(value: unknown): string {
   if (value instanceof Date) {
-    return value.toISOString().split('T')[0]
+    // Extrair componentes locais para evitar shift de timezone
+    const y = value.getFullYear()
+    const m = String(value.getMonth() + 1).padStart(2, '0')
+    const d = String(value.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
   }
 
   if (typeof value === 'number') {
@@ -158,10 +163,26 @@ function parseDate(value: unknown): string {
   }
 
   if (typeof value === 'string') {
-    // Tentar parsear como data
-    const parsed = new Date(value)
+    const trimmed = value.trim()
+
+    // Formato ISO: YYYY-MM-DD — retorna direto sem parsear Date
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed
+    }
+
+    // Formato BR: DD/MM/YYYY
+    const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+    if (brMatch) {
+      return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`
+    }
+
+    // Fallback: forçar midnight local para evitar shift de timezone
+    const parsed = new Date(trimmed + 'T00:00:00')
     if (!isNaN(parsed.getTime())) {
-      return parsed.toISOString().split('T')[0]
+      const y = parsed.getFullYear()
+      const m = String(parsed.getMonth() + 1).padStart(2, '0')
+      const d = String(parsed.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
     }
   }
 
@@ -206,21 +227,22 @@ function toStringOrNull(value: unknown): string | null {
 // Erro customizado para parsing
 // =============================================================
 
-export interface ParseError {
+export class ParseError extends Error {
   code: string
-  message: string
   missing?: string[]
+
+  constructor(code: string, message: string, missing?: string[]) {
+    super(message)
+    this.name = 'ParseError'
+    this.code = code
+    this.missing = missing
+  }
 }
 
 function createParseError(code: string, message: string, missing?: string[]): ParseError {
-  return { code, message, missing }
+  return new ParseError(code, message, missing)
 }
 
 export function isParseError(error: unknown): error is ParseError {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    'message' in error
-  )
+  return error instanceof ParseError
 }
