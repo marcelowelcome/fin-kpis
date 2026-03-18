@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { getSupabaseBrowser } from '@/lib/supabase'
 
 export interface Profile {
   id: string
@@ -25,32 +24,9 @@ export function useAuth(): UseAuthReturn {
   const fetchProfile = useCallback(async () => {
     setLoading(true)
     try {
-      const supabase = getSupabaseBrowser()
-      const { data: { user } } = await supabase.auth.getUser()
-
-      if (!user) {
-        setProfile(null)
-        return
-      }
-
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      if (data) {
-        setProfile(data as Profile)
-      } else {
-        // Profile não existe ainda — tratar como viewer
-        setProfile({
-          id: user.id,
-          email: user.email ?? '',
-          nome: null,
-          role: 'viewer',
-          created_at: new Date().toISOString(),
-        })
-      }
+      const res = await fetch('/api/auth/profile', { cache: 'no-store' })
+      const json = await res.json()
+      setProfile(json.profile as Profile | null)
     } catch {
       setProfile(null)
     } finally {
