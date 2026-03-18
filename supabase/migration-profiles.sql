@@ -24,7 +24,8 @@ CREATE POLICY "Admins can read all profiles"
 -- Admins podem inserir/atualizar/deletar perfis
 CREATE POLICY "Admins can manage profiles"
   ON profiles FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- Trigger: criar profile automaticamente ao criar usuário
 CREATE OR REPLACE FUNCTION public.handle_new_user()
