@@ -2,6 +2,7 @@
 ## Dashboard Executivo de Vendas · Welcome Trips
 
 > **Leia este arquivo antes de qualquer outro.** Ele é a fonte de verdade da arquitetura do projeto.
+> Última atualização: 2026-03-18
 
 ---
 
@@ -15,86 +16,91 @@
 | Banco de Dados   | Supabase (PostgreSQL)                         |
 | Hospedagem       | Vercel                                        |
 | Linguagem        | TypeScript (strict mode)                      |
-| UI               | Tailwind CSS + Recharts                       |
+| UI               | Tailwind CSS + Lucide React (ícones)          |
+| Gráficos         | Recharts (disponível, uso futuro)             |
 | Parsing Excel    | SheetJS (xlsx)                                |
 | Validação        | Zod                                           |
 | Autenticação     | Supabase Auth (email/senha)                   |
+| Export           | html2canvas + jsPDF                           |
 
 ---
 
 ## 2. Estrutura de Diretórios
 
 ```
-dashwt/
+fin-kpis/
 ├── app/
-│   ├── (dashboard)/              # Rota principal do dashboard
-│   │   └── page.tsx
-│   ├── upload/
-│   │   └── page.tsx              # Tela de upload de arquivos
-│   ├── historico/
-│   │   └── page.tsx              # Histórico de uploads
-│   ├── metas/
-│   │   └── page.tsx              # Gestão de metas
-│   ├── qualidade/
-│   │   └── page.tsx              # Painel de qualidade de dados
+│   ├── page.tsx                    # Dashboard — tabs Group/Trips/Weddings/Corp
+│   ├── vendedores/page.tsx         # Ranking completo de vendedores + filtros
+│   ├── upload/page.tsx             # Upload + Histórico de uploads
+│   ├── metas/page.tsx              # Gestão de metas mensais
+│   ├── qualidade/page.tsx          # Painel de qualidade de dados
+│   ├── login/page.tsx              # Tela de login
+│   ├── layout.tsx                  # Layout raiz (sidebar + content)
+│   ├── error.tsx                   # Error boundary
+│   ├── not-found.tsx               # 404
+│   ├── globals.css                 # Estilos globais + scrollbar
 │   └── api/
-│       ├── upload/route.ts       # POST: processar upload Excel
+│       ├── upload/route.ts         # POST: processar upload Excel
 │       ├── uploads/
-│       │   ├── route.ts          # GET: listar histórico de uploads
-│       │   └── [id]/route.ts     # DELETE: excluir upload + vendas
-│       ├── dashboard/route.ts    # GET: KPIs agregados por período/setor
-│       ├── metas/route.ts        # GET + POST + PUT: CRUD de metas
-│       ├── qualidade/route.ts    # GET: score e alertas de qualidade
-│       └── vendas/route.ts       # GET: listagem filtrada para drill-down
+│       │   ├── route.ts            # GET: listar uploads
+│       │   └── [id]/route.ts       # GET: detalhe | DELETE: excluir + cascata
+│       ├── dashboard/route.ts      # GET: KPIs + pipeline + vendedores + forecast + delta + monthly
+│       ├── insights/
+│       │   └── vendedores/route.ts # GET: ranking vendedores com filtros
+│       ├── metas/route.ts          # GET + POST: CRUD de metas
+│       ├── qualidade/route.ts      # GET: score + timeline (usa calcScoreFromAlerts)
+│       └── vendas/route.ts         # GET: listagem filtrada para drill-down
 │
 ├── lib/
-│   ├── schemas.ts                # Tipos TypeScript + schemas Zod
-│   ├── supabase.ts               # Clientes Supabase (server e browser)
-│   ├── excel-parser.ts           # Parsing SheetJS + normalização
-│   ├── setor-mapper.ts           # setor_bruto → setor_grupo
-│   ├── metrics.ts                # Cálculo de KPIs e agregações
-│   └── data-quality.ts           # Regras de qualidade + scoring
+│   ├── schemas.ts                  # Tipos + Zod schemas (fonte de verdade de tipos)
+│   ├── supabase.ts                 # Clientes Supabase (browser + server)
+│   ├── excel-parser.ts             # Parsing SheetJS + normalização + ParseError class
+│   ├── setor-mapper.ts             # setor_bruto → setor_grupo (exato + keyword)
+│   ├── metrics.ts                  # KPIs, forecast, delta, pipeline, vendedores, produtos, monthly
+│   ├── data-quality.ts             # Qualidade + scoring (calcScoreFromAlerts)
+│   └── format.ts                   # Formatadores BRL, %, data, cores
 │
 ├── components/
 │   ├── dashboard/
-│   │   ├── KPICard.tsx           # Card Fat.Meta / Realizado / %
-│   │   ├── SectorBlock.tsx       # Bloco de setor (CORP/TRIPS/WEDDINGS)
-│   │   ├── ConsolidadoWT.tsx     # Visão Welcome Trips consolidada
-│   │   ├── PeriodSelector.tsx    # Seletor semana / mês / acumulado
-│   │   └── DrillDownTable.tsx    # Tabela filtrável + exportação
+│   │   ├── KPICard.tsx             # Card KPI com delta badge ↑↓
+│   │   ├── PeriodSelector.tsx      # Pills período + calendário Lucide
+│   │   ├── CompanyTabs.tsx         # Tabs: Group | Trips | Weddings | Corp
+│   │   ├── PipelineCard.tsx        # Aberta vs Fechada + taxa conversão
+│   │   ├── TopVendedores.tsx       # Ranking vendedores com avatars
+│   │   ├── ForecastCard.tsx        # Projeção fim de período + ritmo diário
+│   │   ├── MonthlyChart.tsx        # Recharts AreaChart evolução mensal vs meta
+│   │   ├── TopProdutos.tsx         # Ranking produtos com barras
+│   │   └── ExportButton.tsx        # Export PDF (html2canvas + jsPDF)
 │   ├── upload/
-│   │   ├── UploadZone.tsx        # Drag & drop + validação de estrutura
-│   │   ├── PreviewTable.tsx      # Pré-visualização antes de confirmar
-│   │   └── QualityReport.tsx     # Relatório de alertas pós-parse
+│   │   ├── UploadZone.tsx          # Drag & drop
+│   │   ├── PreviewTable.tsx        # Pré-visualização com badges
+│   │   └── QualityReport.tsx       # Alertas com exemplos
 │   ├── metas/
-│   │   └── MetasTable.tsx        # Tabela editável mês × setor
+│   │   └── MetasTable.tsx          # Grid editável mês × setor
 │   ├── history/
-│   │   ├── UploadHistory.tsx     # Lista de uploads com ações
-│   │   └── DeleteConfirmModal.tsx# Dupla confirmação de exclusão
-│   ├── qualidade/
-│   │   └── QualityDashboard.tsx  # Score + timeline de qualidade
+│   │   ├── UploadHistory.tsx       # Lista uploads + modal alertas
+│   │   └── DeleteConfirmModal.tsx  # Confirmação dupla de exclusão
 │   └── ui/
-│       ├── Badge.tsx             # Badge de status / severidade
-│       ├── DataTable.tsx         # Tabela genérica reutilizável
-│       └── LoadingSpinner.tsx    # Loading states
+│       ├── Navigation.tsx          # Sidebar Lucide (desktop) + top bar (mobile)
+│       ├── Badge.tsx               # Status / severidade
+│       ├── DataTable.tsx           # Tabela genérica
+│       └── LoadingSpinner.tsx      # Loading states
 │
 ├── hooks/
-│   ├── useDashboard.ts           # Fetch + estado do dashboard
-│   ├── useUpload.ts              # Estado do fluxo de upload
-│   └── useMetas.ts               # Fetch + mutações de metas
+│   ├── useDashboard.ts             # Fetch dashboard (cache: no-store)
+│   ├── useUpload.ts                # State machine de upload
+│   └── useMetas.ts                 # Fetch + mutações metas (cache: no-store)
 │
 ├── supabase/
-│   ├── schema.sql                # DDL completo das tabelas
-│   ├── rls.sql                   # Políticas de Row Level Security
-│   └── seed.sql                  # Dados de metas iniciais (opcional)
+│   ├── schema.sql                  # DDL completo
+│   ├── rls.sql                     # Row Level Security
+│   ├── seed.sql                    # Dados iniciais (opcional)
+│   └── migration-add-situacao.sql  # Coluna situacao
 │
-├── types/
-│   └── index.ts                  # Re-exports de todos os tipos
-│
-├── ARCHITECTURE.md               # (este arquivo)
-├── AGENT_INSTRUCTIONS.md         # Regras para agentes de IA
-├── PROMPT_CONTEXT.md             # Contexto por módulo
-└── .env.local                    # Variáveis de ambiente (não versionar)
+├── middleware.ts                   # Auth (protege páginas, exceto /login e /api)
+├── ARCHITECTURE.md                 # (este arquivo)
+└── AGENT_INSTRUCTIONS.md           # Regras para agentes IA
 ```
 
 ---
@@ -103,35 +109,32 @@ dashwt/
 
 ### 3.1 Tabela `vendas`
 
-Chave primária: `venda_numero` (INTEGER). Estratégia de upsert: `INSERT ... ON CONFLICT (venda_numero) DO UPDATE`.
+`venda_numero` NÃO é único — um pedido tem N itens. PK é `BIGINT IDENTITY`.
+
+**Deduplicação:** Delete por range de datas (min/max do arquivo) + Insert. Uploads de períodos diferentes não interferem.
 
 ```sql
 CREATE TABLE vendas (
-  venda_numero    INTEGER PRIMARY KEY,
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  venda_numero    INTEGER NOT NULL,
   vendedor        TEXT NOT NULL,
   data_venda      DATE NOT NULL,
   pagante         TEXT NOT NULL,
-  setor_bruto     TEXT,                        -- valor exato do Excel (auditoria)
-  setor_grupo     TEXT NOT NULL,               -- CORP | TRIPS | WEDDINGS | OUTROS | INDEFINIDO
+  setor_bruto     TEXT,
+  setor_grupo     TEXT NOT NULL,   -- CORP | TRIPS | WEDDINGS | OUTROS | INDEFINIDO
   produto         TEXT,
   fornecedor      TEXT,
   representante   TEXT,
   valor_total     NUMERIC(12,2) NOT NULL DEFAULT 0,
   receitas        NUMERIC(12,2) DEFAULT 0,
   faturamento     NUMERIC(12,2) DEFAULT 0,
+  situacao        TEXT,            -- 'Aberta' ou 'Fechada'
   upload_id       UUID REFERENCES uploads(id) ON DELETE CASCADE,
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX idx_vendas_data ON vendas(data_venda);
-CREATE INDEX idx_vendas_setor ON vendas(setor_grupo);
-CREATE INDEX idx_vendas_upload ON vendas(upload_id);
 ```
 
 ### 3.2 Tabela `uploads`
-
-Registra cada importação realizada. A exclusão de um upload cascateia para todos os registros de `vendas` com aquele `upload_id`.
-
 ```sql
 CREATE TABLE uploads (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -146,9 +149,6 @@ CREATE TABLE uploads (
 ```
 
 ### 3.3 Tabela `metas`
-
-Constraint única em `(ano, mes, setor_grupo)` para garantir exatamente uma meta por célula.
-
 ```sql
 CREATE TABLE metas (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -163,113 +163,139 @@ CREATE TABLE metas (
 
 ---
 
-## 4. Mapeamento de Setores
+## 4. Dashboard — Estrutura de Dados
 
-O campo `Setor` do Excel pode conter diferentes valores. A função `mapSetor()` em `lib/setor-mapper.ts` faz a tradução:
-
-| `setor_bruto` (Excel)  | `setor_grupo` (DB) | Incluso em metas? |
-|------------------------|--------------------|-------------------|
-| `Corporativo`          | `CORP`             | ✅ Sim             |
-| `Lazer`                | `TRIPS`            | ✅ Sim             |
-| `Expedições`           | `TRIPS`            | ✅ Sim             |
-| `Weddings`             | `WEDDINGS`         | ✅ Sim             |
-| `WedMe`                | `WEDDINGS`         | ✅ Sim             |
-| `Produção`             | `WEDDINGS`         | ✅ Sim             |
-| `Planejamento-WED`     | `WEDDINGS`         | ✅ Sim             |
-| `Welcome`              | `OUTROS`           | ❌ Não             |
-| `null` / `""`          | `INDEFINIDO`       | ❌ Não — alerta    |
-
-O consolidado `WT` é sempre: `SUM(CORP) + SUM(TRIPS) + SUM(WEDDINGS)`. Nunca inclui OUTROS ou INDEFINIDO.
-
----
-
-## 5. Fluxo de Upload — Passo a Passo
-
-```
-[Browser]
-  │
-  ├─ 1. Usuário seleciona .xlsx
-  ├─ 2. SheetJS parseia no cliente (client-side apenas)
-  ├─ 3. Valida colunas obrigatórias
-  ├─ 4. Executa regras de qualidade (data-quality.ts)
-  ├─ 5. Exibe PreviewTable + QualityReport
-  ├─ 6. Usuário confirma
-  │
-[POST /api/upload]
-  │
-  ├─ 7. Re-parseia no servidor (segurança)
-  ├─ 8. Aplica setor-mapper.ts em cada linha
-  ├─ 9. Upsert em lote na tabela `vendas`
-  │      INSERT ON CONFLICT (venda_numero) DO UPDATE SET ...
-  ├─ 10. Registra resultado na tabela `uploads`
-  └─ 11. Retorna { insertadas, atualizadas, alertas, uploadId }
-```
-
----
-
-## 6. Estrutura de KPIs
-
-Toda agregação de KPI passa por `lib/metrics.ts`. A API Route `/api/dashboard` chama `metrics.ts` com os filtros de período e retorna o objeto abaixo:
+A API `/api/dashboard` retorna `DashboardData`:
 
 ```typescript
 interface DashboardData {
   periodo: { inicio: string; fim: string; label: string }
-  consolidado: SetorKPI          // WT
+
+  // KPIs por setor
+  consolidado: SetorKPI          // WT = CORP + TRIPS + WEDDINGS
   corp: SetorKPI
-  trips: SetorKPI & { nTaxas: number }
-  weddings: SetorKPI & {
-    nContratos: number
-    subcategorias: Record<string, SetorKPI>  // WedMe, Produção, Planejamento-WED
+  trips: TripsKPI                // + nTaxas
+  weddings: WeddingsKPI          // + nContratos + subcategorias
+
+  // Pipeline (Aberta vs Fechada) por setor
+  pipeline: {
+    total: PipelineData
+    corp: PipelineData
+    trips: PipelineData
+    weddings: PipelineData
   }
-  ultimaAtualizacao: string      // data do upload mais recente
+
+  // Top 5 vendedores por setor
+  topVendedores: {
+    total: VendedorRanking[]
+    corp: VendedorRanking[]
+    trips: VendedorRanking[]
+    weddings: VendedorRanking[]
+  }
+
+  // Projeção de fim de período
+  forecast: {
+    total: ForecastData
+    corp: ForecastData
+    trips: ForecastData
+    weddings: ForecastData
+  }
+
+  // Delta vs período anterior (null se sem dados)
+  delta: {
+    consolidado: DeltaData | null
+    corp: DeltaData | null
+    trips: DeltaData | null
+    weddings: DeltaData | null
+  } | null
+
+  ultimaAtualizacao: string | null
+}
+```
+
+### Tipos auxiliares:
+```typescript
+interface SetorKPI {
+  fatMeta, fatRealizado, percRealizado, receita, percReceita, ticketMedio, nVendas
 }
 
-interface SetorKPI {
-  fatMeta: number
-  fatRealizado: number
-  percRealizado: number          // fatRealizado / fatMeta
-  receita: number
-  percReceita: number            // receita / fatRealizado
-  ticketMedio: number
-  nVendas: number
+interface PipelineData {
+  aberta: { count, valor }
+  fechada: { count, valor }
+  taxaConversao: number | null
+}
+
+interface VendedorRanking {
+  vendedor, faturamento, receitas, nVendas, ticketMedio
+}
+
+interface ForecastData {
+  projecao, ritmoAtual, diasRestantes, diasDecorridos, metaAtingivel
+}
+
+interface DeltaData {
+  valor, percentual  // (atual - anterior) / anterior
 }
 ```
 
 ---
 
-## 7. Regras de Negócio Críticas
+## 5. UI — Navegação por Empresa
 
-1. **Deduplicação**: `venda_numero` é a chave única. Upsert sempre, nunca insert puro.
-2. **WT ≠ soma de tudo**: WT = CORP + TRIPS + WEDDINGS apenas. OUTROS e INDEFINIDO ficam fora.
-3. **Weddings consolidado**: qualquer cálculo de WEDDINGS some WedMe + Weddings + Produção + Planejamento-WED.
-4. **Semanas**: a granularidade semanal usa número ISO da semana (`date_part('week', data_venda)`). Exibir como "S10", "S11" etc.
-5. **Valores negativos**: são mantidos no banco (representam cancelamentos/estornos). Entram nos cálculos, mas são sinalizados no painel de qualidade.
-6. **Metas WT**: podem ser informadas manualmente OU calculadas como soma de CORP + TRIPS + WEDDINGS. Comportamento configurável via constante `METAS_WT_AUTO` em `lib/metrics.ts`.
-7. **Nº de Contratos WEDDINGS**: `COUNT(venda_numero) WHERE produto IN ('Contrato de Casamento', 'Pacote de Casamento')`.
-8. **Nº de Taxas TRIPS**: `COUNT(venda_numero) WHERE produto = 'Taxa de Serviço' AND setor_grupo = 'TRIPS'`.
+O dashboard usa **client-side tabs** (sem mudança de rota):
+
+| Tab | Conteúdo |
+|-----|----------|
+| **Group** | Consolidado WT + 3 cards setoriais + Forecast + Pipeline geral + Top 5 vendedores |
+| **Trips** | KPI Trips detalhado + taxas + Forecast + Pipeline + Top 5 vendedores Trips |
+| **Weddings** | KPI Weddings + subcategorias em cards + Forecast + Pipeline + Top 5 vendedores |
+| **Corp** | KPI Corp + Forecast + Pipeline + Top 5 vendedores Corp |
+
+**Estilo visual:** Clean minimal (Linear/Vercel) — fundo branco, cards `rounded-2xl shadow-sm`, ícones Lucide SVG, sidebar escura.
+
+---
+
+## 6. Regras de Negócio Críticas
+
+1. **venda_numero NÃO é único.** PK é `id` (BIGINT auto).
+2. **Dedup por range de datas** (não por venda_numero).
+3. **WT = CORP + TRIPS + WEDDINGS.** OUTROS/INDEFINIDO excluídos.
+4. **Datas são strings ISO end-to-end.** Nunca `new Date('YYYY-MM-DD')`.
+5. **Supabase: paginar com `.order('id').range()`.** Max 1000 rows por request.
+6. **Fetch client: `{ cache: 'no-store' }`.** Em todo hook.
+7. **API routes: `export const dynamic = 'force-dynamic'` + `revalidate = 0`.**
+8. **Score de qualidade:** fonte única em `calcScoreFromAlerts()` de `data-quality.ts`.
+9. **Situação é opcional.** Fallback: `Situação` → `Situacao` → `situacao`.
+10. **Forecast:** `projecao = realizado + (ritmo_diário × dias_restantes)`.
+11. **Delta:** compara com período anterior equivalente (mês anterior, semana anterior, ano anterior).
+12. **Export PDF:** `html2canvas` + `jsPDF`, captura `#dashboard-content`.
+
+---
+
+## 7. Decisões de Arquitetura
+
+| Decisão | Escolha | Motivo |
+|---------|---------|--------|
+| PK vendas | `BIGINT IDENTITY` | venda_numero não é único |
+| Dedup upload | Range de datas | Períodos não interferem |
+| Parsing | Client + Server | Preview imediato + segurança |
+| Setor mapper | Exato + keyword | Variações como "Lazer e Expedições" |
+| Datas | Strings ISO | Evita timezone bugs |
+| Paginação | `.order('id').range()` loop | Supabase max 1000 rows |
+| Cache client | `no-store` | Dados sempre frescos |
+| API routes | `force-dynamic` + `revalidate=0` | Next.js cacheia por padrão |
+| Tabs empresa | Client-side state | Sem reload, dados já carregados |
+| Ícones | Lucide React | SVG leve, tree-shakeable |
+| Export | html2canvas + jsPDF | Captura visual sem server rendering |
+| Score qualidade | `calcScoreFromAlerts()` | Fonte única, sem duplicação |
+| Delta | `getPreviousPeriodRange()` | Período comparável automático |
 
 ---
 
 ## 8. Variáveis de Ambiente
 
 ```bash
-# .env.local
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_ROLE_KEY=eyJ...     # Apenas em API Routes, nunca no client
+SUPABASE_SERVICE_ROLE_KEY=eyJ...     # Apenas API Routes
 ```
-
-**Nunca expor `SUPABASE_SERVICE_ROLE_KEY` no browser.** Toda operação de escrita (upload, metas, exclusão) deve passar por API Routes server-side.
-
----
-
-## 9. Decisões de Arquitetura
-
-| Decisão | Escolha | Motivo |
-|---------|---------|--------|
-| Parsing Excel | Client-side (pré-view) + Server-side (persistência) | Feedback imediato ao usuário sem round-trip desnecessário |
-| Upsert | `ON CONFLICT DO UPDATE` | Garante idempotência em uploads repetidos |
-| `setor_bruto` separado de `setor_grupo` | Duas colunas | Permite auditoria do valor original sem perder o mapeamento |
-| `alertas_qualidade` como JSONB | Array estruturado | Permite consultar alertas sem parsear texto |
-| Cascata `ON DELETE CASCADE` | uploads → vendas | Exclusão de upload limpa automaticamente os registros filhos |
-| API Routes para escrita | Next.js server | `SUPABASE_SERVICE_ROLE_KEY` nunca vaza para o cliente |
