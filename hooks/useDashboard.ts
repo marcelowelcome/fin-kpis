@@ -14,6 +14,8 @@ interface UseDashboardReturn {
   setCustomInicio: (d: string) => void
   customFim: string
   setCustomFim: (d: string) => void
+  vendedorFilter: string | null
+  setVendedorFilter: (v: string | null) => void
 }
 
 export function useDashboard(): UseDashboardReturn {
@@ -23,6 +25,7 @@ export function useDashboard(): UseDashboardReturn {
   const [periodo, setPeriodo] = useState('mes-corrente')
   const [customInicio, setCustomInicio] = useState('')
   const [customFim, setCustomFim] = useState('')
+  const [vendedorFilter, setVendedorFilter] = useState<string | null>(null)
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true)
@@ -34,8 +37,11 @@ export function useDashboard(): UseDashboardReturn {
         params.set('inicio', customInicio)
         params.set('fim', customFim)
       }
+      if (vendedorFilter) {
+        params.set('vendedor', vendedorFilter)
+      }
 
-      const res = await fetch(`/api/dashboard?${params}`)
+      const res = await fetch(`/api/dashboard?${params}`, { cache: 'no-store' })
       const json = await res.json()
 
       if (!res.ok) {
@@ -49,7 +55,7 @@ export function useDashboard(): UseDashboardReturn {
     } finally {
       setLoading(false)
     }
-  }, [periodo, customInicio, customFim])
+  }, [periodo, customInicio, customFim, vendedorFilter])
 
   useEffect(() => {
     fetchDashboard()
@@ -66,5 +72,7 @@ export function useDashboard(): UseDashboardReturn {
     setCustomInicio,
     customFim,
     setCustomFim,
+    vendedorFilter,
+    setVendedorFilter,
   }
 }

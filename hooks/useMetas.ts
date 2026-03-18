@@ -26,7 +26,7 @@ export function useMetas(): UseMetasReturn {
     setError(null)
 
     try {
-      const res = await fetch(`/api/metas?ano=${ano}`)
+      const res = await fetch(`/api/metas?ano=${ano}`, { cache: 'no-store' })
       const json = await res.json()
 
       if (!res.ok) {
