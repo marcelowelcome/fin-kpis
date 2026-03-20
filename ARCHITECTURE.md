@@ -59,7 +59,8 @@ fin-kpis/
 │   ├── setor-mapper.ts             # setor_bruto → setor_grupo (exato + keyword)
 │   ├── metrics.ts                  # KPIs, forecast, delta, pipeline, vendedores, produtos, monthly
 │   ├── data-quality.ts             # Qualidade + scoring (calcScoreFromAlerts)
-│   └── format.ts                   # Formatadores BRL, %, data, cores
+│   ├── format.ts                   # Formatadores BRL, %, data, cores, getInitials, AVATAR_COLORS
+│   └── api-utils.ts                # Shared API helpers: jsonError(), getAuthUser(), todayISO()
 │
 ├── components/
 │   ├── dashboard/

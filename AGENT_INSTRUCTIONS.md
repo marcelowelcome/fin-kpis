@@ -99,25 +99,34 @@ Na página de Metas, a coluna WT é **read-only** e calculada automaticamente (f
 
 ---
 
-### REGRA 10 — Score de qualidade: fonte única
+### REGRA 10 — Shared API utils
+
+- `jsonError()` de `lib/api-utils.ts` — nunca definir local em API routes.
+- `getAuthUser(request)` — verifica auth + role. Usar em rotas admin.
+- `todayISO()` — retorna "YYYY-MM-DD" local. Nunca usar `new Date().toISOString().split('T')[0]`.
+- `getInitials()` e `AVATAR_COLORS` em `lib/format.ts` — nunca duplicar em componentes.
+
+---
+
+### REGRA 11 — Score de qualidade: fonte única
 
 Usar `calcScoreFromAlerts()` de `lib/data-quality.ts`. Nunca replicar lógica.
 
 ---
 
-### REGRA 11 — Situação é opcional
+### REGRA 12 — Situação é opcional
 
 Não está em `COLUNAS_OBRIGATORIAS`. Fallback: `raw['Situação'] ?? raw['Situacao'] ?? raw['situacao']`.
 
 ---
 
-### REGRA 12 — Tabs por empresa são client-side state
+### REGRA 13 — Tabs por empresa são client-side state
 
 Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas separadas.
 
 ---
 
-### REGRA 13 — Forecast e Delta
+### REGRA 14 — Forecast e Delta
 
 - **Forecast:** `calcForecast()` em metrics.ts. Projeção = realizado + (ritmo × dias restantes).
 - **Delta:** `calcDelta()` + `getPreviousPeriodRange()`. Comparação com período equivalente anterior.
@@ -125,7 +134,7 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ---
 
-### REGRA 14 — VendaKPI vs Venda
+### REGRA 15 — VendaKPI vs Venda
 
 - `Venda` = tipo completo do banco (todas as colunas)
 - `VendaKPI` = tipo leve para cálculos (sem pagante, fornecedor, representante)
@@ -133,7 +142,7 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ---
 
-### REGRA 15 — Export PDF
+### REGRA 16 — Export PDF
 
 Usa `html2canvas` + `jsPDF`. Captura `#dashboard-content` do DOM. Lazy-loaded (dynamic import).
 
@@ -147,6 +156,8 @@ Usa `html2canvas` + `jsPDF`. Captura `#dashboard-content` do DOM. Lazy-loaded (d
 - [ ] API Route: `dynamic = 'force-dynamic'` + `revalidate = 0`?
 - [ ] Upload: dedup por range de datas?
 - [ ] Service role key apenas em API Routes?
+- [ ] API routes admin usam `getAuthUser()` + role check?
+- [ ] Erros de API via `jsonError()` de `lib/api-utils.ts` (não local)?
 - [ ] Lógica em `lib/`, não em componentes?
 - [ ] WT exclui OUTROS e INDEFINIDO?
 - [ ] Score usa `calcScoreFromAlerts()`?
