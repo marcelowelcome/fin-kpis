@@ -37,4 +37,7 @@ next-env.d.ts
 
 # WSL artifacts
 *:Zone.Identifier
-2025.xlsx
+
+# Excel data files (keep modelo-exportacao-final.xlsx as reference)
+*.xlsx
+!modelo-exportacao-final.xlsx

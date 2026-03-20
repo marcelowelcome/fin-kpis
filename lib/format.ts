@@ -53,3 +53,22 @@ export function getPercentBgColor(perc: number | null): string {
   if (perc >= 0.7) return 'bg-amber-50'
   return 'bg-red-50'
 }
+
+/** Gera iniciais a partir do nome (ex: "Maria Silva" → "MS") */
+export function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .filter((p) => p.length > 0)
+    .slice(0, 2)
+    .map((p) => p[0].toUpperCase())
+    .join('')
+}
+
+/** Cores de fundo para avatars de vendedores (cicla por index) */
+export const AVATAR_COLORS = [
+  'bg-blue-100 text-blue-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-purple-100 text-purple-700',
+  'bg-rose-100 text-rose-700',
+]

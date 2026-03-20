@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Users } from 'lucide-react'
 import { PeriodSelector } from '@/components/dashboard/PeriodSelector'
-import { formatBRL, formatPercent } from '@/lib/format'
+import { formatBRL, formatPercent, getInitials, AVATAR_COLORS } from '@/lib/format'
 import { getPeriodRange } from '@/lib/metrics'
 
 interface VendedorRow {
@@ -13,24 +13,6 @@ interface VendedorRow {
   nVendas: number
   ticketMedio: number
 }
-
-/** Gera iniciais a partir do nome (ex: "Maria Silva" -> "MS") */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .filter((p) => p.length > 0)
-    .slice(0, 2)
-    .map((p) => p[0].toUpperCase())
-    .join('')
-}
-
-const AVATAR_COLORS = [
-  'bg-blue-100 text-blue-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-amber-100 text-amber-700',
-  'bg-purple-100 text-purple-700',
-  'bg-rose-100 text-rose-700',
-]
 
 const SETORES = [
   { value: '', label: 'Todos' },

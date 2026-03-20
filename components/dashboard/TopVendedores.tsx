@@ -1,7 +1,7 @@
 'use client'
 
 import type { VendedorRanking } from '@/lib/schemas'
-import { formatBRL } from '@/lib/format'
+import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
 
 interface TopVendedoresProps {
   vendedores: VendedorRanking[]
@@ -9,25 +9,6 @@ interface TopVendedoresProps {
   activeVendedor?: string | null
   onSelect?: (vendedor: string | null) => void
 }
-
-/** Gera iniciais a partir do nome (ex: "Maria Silva" → "MS") */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .filter((p) => p.length > 0)
-    .slice(0, 2)
-    .map((p) => p[0].toUpperCase())
-    .join('')
-}
-
-/** Cores de fundo para avatars (cicla por index) */
-const AVATAR_COLORS = [
-  'bg-blue-100 text-blue-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-amber-100 text-amber-700',
-  'bg-purple-100 text-purple-700',
-  'bg-rose-100 text-rose-700',
-]
 
 export function TopVendedores({ vendedores, loading = false, activeVendedor, onSelect }: TopVendedoresProps) {
   if (loading) {

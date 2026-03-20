@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
 import { calcDashboard, getPeriodRange, getPreviousPeriodRange, calcTrendRange } from '@/lib/metrics'
-import { todayISO } from '@/lib/api-utils'
-import type { ApiError, VendaKPI, Meta } from '@/lib/schemas'
+import { todayISO, jsonError } from '@/lib/api-utils'
+import type { VendaKPI, Meta } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -18,6 +18,18 @@ export async function GET(request: NextRequest) {
     const inicioParam = searchParams.get('inicio') ?? undefined
     const fimParam = searchParams.get('fim') ?? undefined
     const vendedorParam = searchParams.get('vendedor') ?? undefined
+
+    // Validar formato de datas custom
+    const isoDateRe = /^\d{4}-\d{2}-\d{2}$/
+    if (inicioParam && !isoDateRe.test(inicioParam)) {
+      return jsonError('INVALID_DATE', 'Formato de inicio inválido. Use YYYY-MM-DD.', 400)
+    }
+    if (fimParam && !isoDateRe.test(fimParam)) {
+      return jsonError('INVALID_DATE', 'Formato de fim inválido. Use YYYY-MM-DD.', 400)
+    }
+    if (inicioParam && fimParam && inicioParam > fimParam) {
+      return jsonError('INVALID_RANGE', 'Data inicio deve ser anterior a fim.', 400)
+    }
 
     // 1. Calcular range — retorna strings ISO, nunca Date
     let range
@@ -181,7 +193,3 @@ function getDeltaLabel(periodo: string): string | null {
   }
 }
 
-function jsonError(code: string, message: string, status: number) {
-  const body: ApiError = { error: { code, message } }
-  return NextResponse.json(body, { status })
-}

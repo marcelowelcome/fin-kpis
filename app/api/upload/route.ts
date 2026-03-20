@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
 import { parseExcel, isParseError } from '@/lib/excel-parser'
-import type { UploadResponse, ApiError, VendaInput } from '@/lib/schemas'
+import type { UploadResponse, VendaInput } from '@/lib/schemas'
+import { jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -86,13 +87,21 @@ export async function POST(request: NextRequest) {
 
       // Limpar uploads que ficaram sem vendas (órfãos)
       for (const uid of affectedUploadIds) {
-        const { count: remaining } = await supabase
+        const { count: remaining, error: countError } = await supabase
           .from('vendas')
           .select('*', { count: 'exact', head: true })
           .eq('upload_id', uid)
 
+        if (countError) {
+          console.error(`Erro ao verificar upload órfão ${uid}:`, countError)
+          continue
+        }
+
         if (remaining === 0) {
-          await supabase.from('uploads').delete().eq('id', uid)
+          const { error: delError } = await supabase.from('uploads').delete().eq('id', uid)
+          if (delError) {
+            console.error(`Erro ao deletar upload órfão ${uid}:`, delError)
+          }
         }
       }
     }
@@ -161,7 +170,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function jsonError(code: string, message: string, status: number) {
-  const body: ApiError = { error: { code, message } }
-  return NextResponse.json(body, { status })
-}

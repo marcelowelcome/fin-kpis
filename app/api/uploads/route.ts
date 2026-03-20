@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
-import type { ApiError } from '@/lib/schemas'
+import { jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -33,7 +33,3 @@ export async function GET(_request: NextRequest) {
   }
 }
 
-function jsonError(code: string, message: string, status: number) {
-  const body: ApiError = { error: { code, message } }
-  return NextResponse.json(body, { status })
-}
