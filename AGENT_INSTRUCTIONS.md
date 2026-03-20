@@ -95,6 +95,7 @@ Um pedido tem N itens. PK é `id`. Nunca upsert com `onConflict: 'venda_numero'`
 ### REGRA 9 — WT = CORP + TRIPS + WEDDINGS
 
 Nunca incluir OUTROS ou INDEFINIDO nos KPIs consolidados.
+Na página de Metas, a coluna WT é **read-only** e calculada automaticamente (fat = soma, % rec = média ponderada por faturamento).
 
 ---
 
@@ -169,7 +170,7 @@ Usa `html2canvas` + `jsPDF`. Captura `#dashboard-content` do DOM. Lazy-loaded (d
 | Página vendedores | `/vendedores/page.tsx` | `/api/insights/vendedores` |
 | Upload Excel | `UploadZone`, `PreviewTable`, `QualityReport` | `parseExcel()`, `analyzeQuality()` |
 | Qualidade dados | `/qualidade/page.tsx` | `calcScoreFromAlerts()` |
-| Metas mensais | `MetasTable` | API upsert |
+| Metas mensais | `MetasTable` | API upsert (WT = auto-soma, read-only na UI) |
 | Histórico uploads | `UploadHistory`, `DeleteConfirmModal` | API CRUD + cascade |
 | UI moderna | Lucide icons, rounded-2xl, pills | Tailwind + clean minimal |
 

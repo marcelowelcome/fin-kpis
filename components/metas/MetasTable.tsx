@@ -6,6 +6,7 @@ import {
   SETOR_METAS_PRINCIPAIS,
   SETOR_LABELS,
   WEDDINGS_SUBCATEGORIAS_METAS,
+  SETORES_WT,
 } from '@/lib/schemas'
 import { formatBRL } from '@/lib/format'
 
@@ -58,18 +59,36 @@ export function MetasTable({ metas, ano, saving, onSave }: MetasTableProps) {
     setHasChanges(true)
   }
 
+  // WT = soma automática dos 3 setores
+  const getWtFat = (mes: number): number =>
+    SETORES_WT.reduce((sum, s) => sum + getFat(mes, s as SetorMeta), 0)
+
+  // % Rec WT = média ponderada pelo faturamento
+  const getWtPct = (mes: number): number => {
+    let sumWeighted = 0
+    let sumFat = 0
+    for (const s of SETORES_WT) {
+      const fat = getFat(mes, s as SetorMeta)
+      const pct = getPct(mes, s as SetorMeta)
+      sumWeighted += fat * pct
+      sumFat += fat
+    }
+    return sumFat > 0 ? sumWeighted / sumFat : 0
+  }
+
   const handleSave = async () => {
     const metasToSave: MetaInput[] = []
 
-    // Setores principais
+    // Setores principais (CORP, TRIPS, WEDDINGS usam valores editados; WT é calculado)
     for (let mes = 1; mes <= 12; mes++) {
       for (const setor of SETOR_METAS_PRINCIPAIS) {
+        const isWT = setor === 'WT'
         metasToSave.push({
           ano,
           mes,
           setor_grupo: setor,
-          fat_meta: getFat(mes, setor),
-          receita_meta_pct: getPct(mes, setor),
+          fat_meta: isWT ? getWtFat(mes) : getFat(mes, setor),
+          receita_meta_pct: isWT ? getWtPct(mes) : getPct(mes, setor),
         })
       }
     }
@@ -151,44 +170,61 @@ export function MetasTable({ metas, ano, saving, onSave }: MetasTableProps) {
                     <td className="px-4 py-2 font-medium text-slate-700">
                       {mesLabel}
                     </td>
-                    {SETOR_METAS_PRINCIPAIS.map((setor) => (
-                      <td
-                        key={setor}
-                        colSpan={2}
-                        className="px-1 py-1 border-l border-slate-200"
-                      >
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={0}
-                            step={1000}
-                            value={getFat(mes, setor) || ''}
-                            onChange={(e) =>
-                              setFat(mes, setor, parseFloat(e.target.value) || 0)
-                            }
-                            className="flex-1 text-right px-2 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-                            placeholder="0"
-                          />
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={
-                              getPct(mes, setor)
-                                ? +(getPct(mes, setor) * 100).toFixed(2)
-                                : ''
-                            }
-                            onChange={(e) => {
-                              const raw = parseFloat(e.target.value)
-                              setPct(mes, setor, isNaN(raw) ? 0 : raw / 100)
-                            }}
-                            className="w-16 text-right px-1 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-                            placeholder="%"
-                          />
-                        </div>
-                      </td>
-                    ))}
+                    {SETOR_METAS_PRINCIPAIS.map((setor) => {
+                      const isWT = setor === 'WT'
+                      const fatValue = isWT ? getWtFat(mes) : getFat(mes, setor)
+                      const pctValue = isWT ? getWtPct(mes) : getPct(mes, setor)
+
+                      return (
+                        <td
+                          key={setor}
+                          colSpan={2}
+                          className={`px-1 py-1 border-l border-slate-200${isWT ? ' bg-slate-50' : ''}`}
+                        >
+                          {isWT ? (
+                            <div className="flex items-center gap-1">
+                              <span className="flex-1 text-right px-2 py-1 text-sm text-slate-500 tabular-nums">
+                                {fatValue ? fatValue.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—'}
+                              </span>
+                              <span className="w-16 text-right px-1 py-1 text-sm text-slate-500 tabular-nums">
+                                {pctValue ? +(pctValue * 100).toFixed(2) + '%' : '—'}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1000}
+                                value={fatValue || ''}
+                                onChange={(e) =>
+                                  setFat(mes, setor, parseFloat(e.target.value) || 0)
+                                }
+                                className="flex-1 text-right px-2 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+                                placeholder="0"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={0.1}
+                                value={
+                                  pctValue
+                                    ? +(pctValue * 100).toFixed(2)
+                                    : ''
+                                }
+                                onChange={(e) => {
+                                  const raw = parseFloat(e.target.value)
+                                  setPct(mes, setor, isNaN(raw) ? 0 : raw / 100)
+                                }}
+                                className="w-16 text-right px-1 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+                                placeholder="%"
+                              />
+                            </div>
+                          )}
+                        </td>
+                      )
+                    })}
                   </tr>
                 )
               })}

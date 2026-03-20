@@ -77,7 +77,7 @@ fin-kpis/
 │   │   ├── PreviewTable.tsx        # Pré-visualização com badges
 │   │   └── QualityReport.tsx       # Alertas com exemplos
 │   ├── metas/
-│   │   └── MetasTable.tsx          # Grid editável mês × setor
+│   │   └── MetasTable.tsx          # Grid editável mês × setor (WT auto-soma, read-only)
 │   ├── history/
 │   │   ├── UploadHistory.tsx       # Lista uploads + modal alertas
 │   │   └── DeleteConfirmModal.tsx  # Confirmação dupla de exclusão
@@ -151,14 +151,20 @@ CREATE TABLE uploads (
 ### 3.3 Tabela `metas`
 ```sql
 CREATE TABLE metas (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ano          INTEGER NOT NULL,
-  mes          INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
-  setor_grupo  TEXT NOT NULL CHECK (setor_grupo IN ('CORP','TRIPS','WEDDINGS','WT')),
-  fat_meta     NUMERIC(14,2) NOT NULL DEFAULT 0,
-  updated_at   TIMESTAMPTZ DEFAULT now(),
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ano             INTEGER NOT NULL,
+  mes             INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  setor_grupo     TEXT NOT NULL CHECK (setor_grupo IN (
+                    'CORP','TRIPS','WEDDINGS','WT',
+                    'WEDDINGS-WEDME','WEDDINGS-PRODUCAO',
+                    'WEDDINGS-PLANEJAMENTO','WEDDINGS-WEDDINGS')),
+  fat_meta        NUMERIC(14,2) NOT NULL DEFAULT 0,
+  receita_meta_pct NUMERIC(5,4) DEFAULT 0,  -- ex: 0.14 = 14%
+  updated_at      TIMESTAMPTZ DEFAULT now(),
   UNIQUE (ano, mes, setor_grupo)
 );
+-- WT (Welcome Trips) é calculado automaticamente: fat_meta = soma(CORP+TRIPS+WEDDINGS),
+-- receita_meta_pct = média ponderada pelo faturamento. Na UI a coluna WT é read-only.
 ```
 
 ---
