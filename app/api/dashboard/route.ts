@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
 import { calcDashboard, getPeriodRange, getPreviousPeriodRange, calcTrendRange } from '@/lib/metrics'
+import { todayISO } from '@/lib/api-utils'
 import type { ApiError, VendaKPI, Meta } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
     )
 
     // 6. Cache headers
-    const today = new Date().toISOString().split('T')[0]
+    const today = todayISO()
     const isHistorical = range.fim < today
     const cc = isHistorical
       ? 'public, max-age=3600, stale-while-revalidate=7200'

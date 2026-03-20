@@ -4,6 +4,7 @@ import { MetaInputSchema } from '@/lib/schemas'
 import type { ApiError } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 /**
  * GET /api/metas?ano=2026

@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
-import type { ApiError } from '@/lib/schemas'
+import { getAuthUser, jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 /**
  * GET /api/admin/usuarios — Lista todos os usuários (profiles).
+ * Requer autenticação + role admin.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
+    const auth = await getAuthUser(request)
+    if (!auth) return jsonError('UNAUTHORIZED', 'Usuário não autenticado.', 401)
+    if (auth.role !== 'admin') return jsonError('FORBIDDEN', 'Acesso restrito a administradores.', 403)
+
     const supabase = getSupabaseServer()
 
     const { data, error } = await supabase
@@ -42,6 +46,10 @@ export async function GET(_request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const auth = await getAuthUser(request)
+    if (!auth) return jsonError('UNAUTHORIZED', 'Usuário não autenticado.', 401)
+    if (auth.role !== 'admin') return jsonError('FORBIDDEN', 'Acesso restrito a administradores.', 403)
+
     const supabase = getSupabaseServer()
     const body = await request.json()
     const { action } = body
@@ -120,7 +128,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function jsonError(code: string, message: string, status: number) {
-  const body: ApiError = { error: { code, message } }
-  return NextResponse.json(body, { status })
-}

@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase'
 import type { ApiError } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 /**
  * DELETE /api/uploads/[id] — Exclui upload + vendas associadas (cascade).

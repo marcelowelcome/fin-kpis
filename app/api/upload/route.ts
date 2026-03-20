@@ -4,6 +4,7 @@ import { parseExcel, isParseError } from '@/lib/excel-parser'
 import type { UploadResponse, ApiError, VendaInput } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 export async function POST(request: NextRequest) {
   try {
