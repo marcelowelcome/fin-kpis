@@ -126,7 +126,17 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ---
 
-### REGRA 14 — Forecast e Delta
+### REGRA 14 — Metas por Vendedor (vendor_goals)
+
+- Tabela `vendor_goals` (ano, mes, vendedor, fat_meta, receita_meta_pct). Vendedor é TEXT livre, match exato com `vendas.vendedor`.
+- CRUD em `/api/vendor-goals` (GET/POST). Autocomplete de nomes em `/api/vendor-goals/vendedores`.
+- Hook: `useVendorGoals()`. Componente: `VendorGoalsTable`. Página: `/metas-vendedor`.
+- Dashboard: a API enriquece `topVendedores` com `fatMeta` e `percRealizado` do vendor_goals.
+- TopVendedores exibe barra de meta individual quando disponível.
+
+---
+
+### REGRA 15 — Forecast e Delta
 
 - **Forecast:** `calcForecast()` em metrics.ts. Projeção = realizado + (ritmo × dias restantes).
 - **Delta:** `calcDelta()` + `getPreviousPeriodRange()`. Comparação com período equivalente anterior.

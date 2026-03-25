@@ -168,6 +168,22 @@ CREATE TABLE metas (
 -- receita_meta_pct = média ponderada pelo valor total. Na UI a coluna WT é read-only.
 ```
 
+### 3.4 Tabela `vendor_goals`
+```sql
+CREATE TABLE vendor_goals (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ano              INTEGER NOT NULL,
+  mes              INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  vendedor         TEXT NOT NULL,
+  fat_meta         NUMERIC(14,2) NOT NULL DEFAULT 0,
+  receita_meta_pct NUMERIC(5,4) DEFAULT 0,
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (ano, mes, vendedor)
+);
+-- Vendedor é TEXT livre (match exato com vendas.vendedor).
+-- Usado no dashboard para enriquecer TopVendedores com meta individual.
+```
+
 ---
 
 ## 4. Dashboard — Estrutura de Dados
@@ -233,7 +249,8 @@ interface PipelineData {
 }
 
 interface VendedorRanking {
-  vendedor, faturamento, receitas, nVendas, ticketMedio
+  vendedor, faturamento, receitas, nVendas, ticketMedio,
+  fatMeta?, percRealizado?  // de vendor_goals, null se sem meta
 }
 
 interface ForecastData {

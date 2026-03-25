@@ -137,6 +137,30 @@ export interface Meta {
 }
 
 // =============================================================
+// Metas por Vendedor (vendor_goals)
+// =============================================================
+
+export interface VendorGoal {
+  id: string
+  ano: number
+  mes: number
+  vendedor: string
+  fat_meta: number
+  receita_meta_pct: number  // ex: 0.14 = 14%
+  updated_at: string
+}
+
+export const VendorGoalInputSchema = z.object({
+  ano: z.number().int().min(2020).max(2050),
+  mes: z.number().int().min(1).max(12),
+  vendedor: z.string().min(1, 'Vendedor é obrigatório'),
+  fat_meta: z.number().min(0),
+  receita_meta_pct: z.number().min(0).max(1).default(0),
+})
+
+export type VendorGoalInput = z.infer<typeof VendorGoalInputSchema>
+
+// =============================================================
 // Qualidade de dados
 // =============================================================
 

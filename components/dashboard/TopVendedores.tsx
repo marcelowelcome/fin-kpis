@@ -1,10 +1,15 @@
 'use client'
 
 import type { VendedorRanking } from '@/lib/schemas'
-import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
+import { formatBRL, formatPercent, getInitials, AVATAR_COLORS, getPercentColor } from '@/lib/format'
+
+interface VendedorWithGoal extends VendedorRanking {
+  fatMeta?: number | null
+  percRealizado?: number | null
+}
 
 interface TopVendedoresProps {
-  vendedores: VendedorRanking[]
+  vendedores: VendedorWithGoal[]
   loading?: boolean
   activeVendedor?: string | null
   onSelect?: (vendedor: string | null) => void
@@ -94,6 +99,28 @@ export function TopVendedores({ vendedores, loading = false, activeVendedor, onS
                     style={{ width: `${pct}%` }}
                   />
                 </div>
+                {/* Barra de meta individual */}
+                {v.fatMeta != null && v.fatMeta > 0 && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          v.percRealizado != null && v.percRealizado >= 1
+                            ? 'bg-green-500'
+                            : v.percRealizado != null && v.percRealizado >= 0.7
+                            ? 'bg-amber-500'
+                            : 'bg-red-400'
+                        }`}
+                        style={{ width: `${Math.min((v.percRealizado ?? 0) * 100, 100)}%` }}
+                      />
+                    </div>
+                    <span className={`text-[10px] font-semibold tabular-nums shrink-0 ${
+                      v.percRealizado != null ? getPercentColor(v.percRealizado) : 'text-slate-400'
+                    }`}>
+                      {v.percRealizado != null ? formatPercent(v.percRealizado) : '—'}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-xs text-slate-400">
                     Rec: {formatBRL(v.receitas)}

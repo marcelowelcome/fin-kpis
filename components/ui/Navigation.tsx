@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Upload,
   Target,
+  UserCheck,
   ShieldCheck,
   Users,
   Settings,
@@ -25,6 +26,7 @@ const NAV_ITEMS: { href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: '/vendedores', label: 'Vendedores', icon: Users },
   { href: '/upload', label: 'Upload', icon: Upload, adminOnly: true },
   { href: '/metas', label: 'Metas', icon: Target, adminOnly: true },
+  { href: '/metas-vendedor', label: 'Metas Vendedor', icon: UserCheck, adminOnly: true },
   { href: '/qualidade', label: 'Qualidade', icon: ShieldCheck },
   { href: '/admin/usuarios', label: 'Admin', icon: Settings, adminOnly: true },
 ]

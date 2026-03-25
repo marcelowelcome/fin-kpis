@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
 import { calcDashboard, getPeriodRange, getPreviousPeriodRange, calcTrendRange } from '@/lib/metrics'
 import { todayISO, jsonError } from '@/lib/api-utils'
-import type { VendaKPI, Meta } from '@/lib/schemas'
+import type { VendaKPI, Meta, VendorGoal } from '@/lib/schemas'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -83,7 +83,27 @@ export async function GET(request: NextRequest) {
       }
     )
 
-    // 6. Cache headers
+    // 7.5. Enriquecer topVendedores com metas individuais (vendor_goals)
+    const vgMeses = range.meses
+    const vendorGoals = await fetchVendorGoals(supabase, vgMeses)
+    const vgMap = new Map<string, number>()
+    for (const vg of vendorGoals) {
+      const existing = vgMap.get(vg.vendedor) ?? 0
+      vgMap.set(vg.vendedor, existing + vg.fat_meta)
+    }
+    // Attach fatMeta/percRealizado to each ranking entry
+    for (const key of ['total', 'corp', 'trips', 'weddings'] as const) {
+      data.topVendedores[key] = data.topVendedores[key].map((v) => {
+        const meta = vgMap.get(v.vendedor) ?? null
+        return {
+          ...v,
+          fatMeta: meta,
+          percRealizado: meta && meta > 0 ? v.faturamento / meta : null,
+        }
+      })
+    }
+
+    // 8. Cache headers
     const today = todayISO()
     const isHistorical = range.fim < today
     const cc = isHistorical
@@ -181,6 +201,37 @@ function aggregateMetas(metas: Meta[]): Meta[] {
     }
   }
   return Array.from(map.values())
+}
+
+async function fetchVendorGoals(
+  sb: ReturnType<typeof getSupabaseServer>,
+  meses: { ano: number; mes: number }[]
+): Promise<VendorGoal[]> {
+  if (meses.length === 0) return []
+
+  const byAno: Record<number, number[]> = {}
+  for (const { ano, mes } of meses) {
+    if (!byAno[ano]) byAno[ano] = []
+    byAno[ano].push(mes)
+  }
+
+  const all: VendorGoal[] = []
+  for (const anoStr of Object.keys(byAno)) {
+    const ano = Number(anoStr)
+    const months = byAno[ano]
+    const minM = Math.min(...months)
+    const maxM = Math.max(...months)
+    const { data } = await sb
+      .from('vendor_goals')
+      .select('*')
+      .eq('ano', ano)
+      .gte('mes', minM)
+      .lte('mes', maxM)
+
+    if (data) all.push(...(data as VendorGoal[]))
+  }
+
+  return all
 }
 
 function getDeltaLabel(periodo: string): string | null {
