@@ -16,7 +16,7 @@ function criarExemplo(row: VendaInput, detalhe: string): QualityAlertExemplo {
     venda_numero: row.venda_numero,
     vendedor: row.vendedor,
     produto: row.produto,
-    valor: row.faturamento,
+    valor: row.valor_total,
     detalhe,
   }
 }
@@ -33,7 +33,6 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
     linhaNula: 0,
     duplicataInterna: 0,
     setorOutros: 0,
-    faturamentoZero: 0,
   }
 
   const alerts: QualityAlert[] = []
@@ -63,7 +62,7 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
     })
   }
 
-  // --- Valores negativos (faturamento ou receitas) ---
+  // --- Valores negativos (valor total ou receitas) ---
   const valorNegLinhas: number[] = []
   const valorNegExemplos: QualityAlertExemplo[] = []
   rows.forEach((row, i) => {
@@ -71,7 +70,7 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
       valorNegLinhas.push(i)
       if (valorNegExemplos.length < MAX_EXEMPLOS) {
         const detalhes: string[] = []
-        if (row.faturamento < 0) detalhes.push(`Fat: R$ ${row.faturamento.toFixed(2)}`)
+        if (row.faturamento < 0) detalhes.push(`VT: R$ ${row.faturamento.toFixed(2)}`)
         if (row.receitas < 0) detalhes.push(`Rec: R$ ${row.receitas.toFixed(2)}`)
         valorNegExemplos.push(criarExemplo(row, detalhes.join(' | ')))
       }
@@ -94,7 +93,7 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
   // Duplicata real = mesma combinação de venda_numero + produto + valor_total + faturamento.
   const rowKeys = new Map<string, number[]>()
   rows.forEach((row, i) => {
-    const key = `${row.venda_numero}|${row.produto}|${row.valor_total}|${row.faturamento}`
+    const key = `${row.venda_numero}|${row.produto}|${row.valor_total}`
     const existing = rowKeys.get(key)
     if (existing) {
       existing.push(i)
@@ -152,30 +151,8 @@ export function analyzeQuality(rows: VendaInput[]): QualityResult {
     })
   }
 
-  // --- Faturamento zero ---
-  const fatZeroLinhas: number[] = []
-  const fatZeroExemplos: QualityAlertExemplo[] = []
-  rows.forEach((row, i) => {
-    if (row.faturamento === 0 && row.valor_total > 0) {
-      fatZeroLinhas.push(i)
-      if (fatZeroExemplos.length < MAX_EXEMPLOS) {
-        fatZeroExemplos.push(
-          criarExemplo(row, `Valor Total: R$ ${row.valor_total.toFixed(2)}, Fat: R$ 0,00`)
-        )
-      }
-    }
-  })
-  breakdown.faturamentoZero = fatZeroLinhas.length
-  if (fatZeroLinhas.length > 0) {
-    alerts.push({
-      tipo: 'FATURAMENTO_ZERO',
-      severidade: 'AVISO',
-      quantidade: fatZeroLinhas.length,
-      descricao: `${fatZeroLinhas.length} registro(s) com faturamento zero (pode indicar venda em processo)`,
-      linhas_afetadas: fatZeroLinhas,
-      exemplos: fatZeroExemplos,
-    })
-  }
+  // NOTA: A checagem de FATURAMENTO_ZERO foi removida porque faturamento = valor_total
+  // (ambos derivam da mesma coluna "Valor Total" do Excel).
 
   // --- Score ---
   const score = calcScore(breakdown)

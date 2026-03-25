@@ -33,7 +33,7 @@ export function PreviewTable({ rows, totalLinhas }: PreviewTableProps) {
               <th className="px-3 py-2 text-left font-medium text-slate-600">Setor</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Produto</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600">Situacao</th>
-              <th className="px-3 py-2 text-right font-medium text-slate-600">Faturamento</th>
+              <th className="px-3 py-2 text-right font-medium text-slate-600">Valor Total</th>
               <th className="px-3 py-2 text-right font-medium text-slate-600">Receita</th>
             </tr>
           </thead>

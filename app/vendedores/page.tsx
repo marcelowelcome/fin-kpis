@@ -162,7 +162,7 @@ export default function VendedoresPage() {
                     Vendedor
                   </th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Faturamento
+                    Valor Total
                   </th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                     Receita

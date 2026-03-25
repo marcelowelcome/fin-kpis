@@ -95,7 +95,7 @@ Um pedido tem N itens. PK é `id`. Nunca upsert com `onConflict: 'venda_numero'`
 ### REGRA 9 — WT = CORP + TRIPS + WEDDINGS
 
 Nunca incluir OUTROS ou INDEFINIDO nos KPIs consolidados.
-Na página de Metas, a coluna WT é **read-only** e calculada automaticamente (fat = soma, % rec = média ponderada por faturamento).
+Na página de Metas, a coluna WT é **read-only** e calculada automaticamente (fat = soma, % rec = média ponderada por valor total).
 
 ---
 

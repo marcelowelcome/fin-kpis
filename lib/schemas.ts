@@ -32,7 +32,7 @@ export const SETOR_LABELS: Record<SetorGrupo | 'WT', string> = {
   WEDDINGS: 'Weddings',
   OUTROS: 'Outros',
   INDEFINIDO: 'Indefinido',
-  WT: 'Welcome Trips',
+  WT: 'Welcome Group',
 }
 
 /** Setores que compõem o consolidado WT (participam de metas) */
@@ -54,7 +54,6 @@ export const COLUNAS_OBRIGATORIAS = [
   'Produto',
   'Valor Total',
   'Receitas',
-  'Faturamento',
 ] as const
 
 /** Colunas opcionais — presentes em exports mais recentes */
@@ -147,7 +146,6 @@ export const ALERTA_TIPOS = [
   'LINHA_NULA',
   'DUPLICATA_INTERNA',
   'SETOR_OUTROS',
-  'FATURAMENTO_ZERO',
 ] as const
 export type AlertaTipo = (typeof ALERTA_TIPOS)[number]
 
@@ -178,7 +176,6 @@ export interface QualityBreakdown {
   linhaNula: number
   duplicataInterna: number
   setorOutros: number
-  faturamentoZero: number
 }
 
 // =============================================================
@@ -346,7 +343,6 @@ export const VendaExcelSchema = z.object({
   Representante: z.string().nullable().optional(),
   'Valor Total': z.number({ error: 'Valor Total é obrigatório' }),
   Receitas: z.number().default(0),
-  Faturamento: z.number().default(0),
   'Situação': z.string().nullable().optional(),
 })
 

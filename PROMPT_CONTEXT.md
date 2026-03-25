@@ -37,7 +37,7 @@ interface Venda {
   representante: string | null
   valor_total: number
   receitas: number
-  faturamento: number
+  faturamento: number       // = valor_total (mesma coluna Excel)
   situacao: string | null  // 'Aberta' ou 'Fechada'
   upload_id: string
   updated_at: string
@@ -79,7 +79,7 @@ interface QualityAlertExemplo {
 }
 
 interface QualityAlert {
-  tipo: 'SETOR_NULO' | 'VALOR_NEGATIVO' | 'LINHA_NULA' | 'DUPLICATA_INTERNA' | 'SETOR_OUTROS' | 'FATURAMENTO_ZERO'
+  tipo: 'SETOR_NULO' | 'VALOR_NEGATIVO' | 'LINHA_NULA' | 'DUPLICATA_INTERNA' | 'SETOR_OUTROS'
   severidade: 'CRITICO' | 'ATENCAO' | 'AVISO' | 'INFO'
   quantidade: number
   descricao: string
@@ -88,8 +88,10 @@ interface QualityAlert {
 }
 ```
 
-**Colunas obrigatorias do Excel (10):**
-`Venda Nr`, `Vendedor`, `Data Venda`, `Pagante`, `Setor`, `Produto`, `Valor Total`, `Receitas`, `Faturamento`, `Situacao`
+**Colunas obrigatorias do Excel (8):**
+`Venda Nr`, `Vendedor`, `Data Venda`, `Pagante`, `Setor`, `Produto`, `Valor Total`, `Receitas`
+**Coluna opcional:** `Situacao`
+**NOTA:** "Faturamento" foi removido — "Valor Total" assume o papel de faturamento no sistema.
 
 **Dependencias:** nenhuma (modulo base)
 **Importado por:** todos os outros modulos
@@ -167,9 +169,8 @@ null / ""         -> INDEFINIDO
 "Produto"      -> produto
 "Fornecedor"   -> fornecedor
 "Representante"-> representante
-"Valor Total"  -> valor_total    (numero float)
+"Valor Total"  -> valor_total E faturamento (mesmo valor, numero float)
 "Receitas"     -> receitas       (numero float)
-"Faturamento"  -> faturamento    (numero float)
 "Situacao"     -> situacao       (texto: 'Aberta' ou 'Fechada')
 ```
 
@@ -195,13 +196,12 @@ null / ""         -> INDEFINIDO
 | Regra | Tipo | Severidade | Impacto no score |
 |-------|------|------------|-----------------|
 | `setor_grupo === 'INDEFINIDO'` | SETOR_NULO | CRITICO | -5/occ, max -30 |
-| `faturamento < 0` OU `receitas < 0` | VALOR_NEGATIVO | ATENCAO | -2/occ, max -20 |
+| `valor_total < 0` OU `receitas < 0` | VALOR_NEGATIVO | ATENCAO | -2/occ, max -20 |
 | Linha completamente nula | LINHA_NULA | AVISO | -1/occ, max -10 |
-| Duplicata real (mesma combinacao `venda_numero\|produto\|valor_total\|faturamento`) | DUPLICATA_INTERNA | ATENCAO | -5/occ, max -20 |
+| Duplicata real (mesma combinacao `venda_numero\|produto\|valor_total`) | DUPLICATA_INTERNA | ATENCAO | -5/occ, max -20 |
 | `setor_grupo === 'OUTROS'` | SETOR_OUTROS | INFO | sem impacto |
-| `faturamento === 0 AND valor_total > 0` | FATURAMENTO_ZERO | AVISO | sem impacto |
 
-**IMPORTANTE sobre duplicatas:** venda_numero repetido e ESPERADO (um pedido pode ter N itens). Duplicata real = mesma combinacao de `venda_numero + produto + valor_total + faturamento`.
+**IMPORTANTE sobre duplicatas:** venda_numero repetido e ESPERADO (um pedido pode ter N itens). Duplicata real = mesma combinacao de `venda_numero + produto + valor_total`.
 
 **Exemplos:** Cada alerta inclui ate 5 exemplos concretos (`QualityAlertExemplo`) com venda_numero, vendedor, produto e detalhe do problema. Esses exemplos sao persistidos no JSONB da tabela `uploads`.
 

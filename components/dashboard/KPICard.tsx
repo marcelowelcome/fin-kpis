@@ -19,6 +19,8 @@ interface KPICardProps {
   accent?: string
   delta?: DeltaData | null
   deltaLabel?: string | null
+  /** % esperado do período (0-1) baseado em dias decorridos/total */
+  expectedPercent?: number | null
   children?: React.ReactNode
 }
 
@@ -37,6 +39,7 @@ export function KPICard({
   accent,
   delta,
   deltaLabel,
+  expectedPercent,
   children,
 }: KPICardProps) {
   if (loading) {
@@ -71,7 +74,7 @@ export function KPICard({
         )}
       </div>
 
-      {/* Faturamento Realizado */}
+      {/* Valor Total Realizado */}
       <div className="mb-3">
         <div className="flex items-center gap-2">
           <p className="text-2xl font-bold text-slate-900" style={{ fontFeatureSettings: '"tnum"' }}>
@@ -103,9 +106,9 @@ export function KPICard({
         </p>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar with expected marker */}
       {fatMeta > 0 && (
-        <div className="w-full h-2.5 bg-slate-100 rounded-full mb-4 overflow-hidden">
+        <div className="relative w-full h-2.5 bg-slate-100 rounded-full mb-4">
           <div
             className={`h-full rounded-full transition-all ${
               percRealizado !== null && percRealizado >= 1
@@ -116,6 +119,13 @@ export function KPICard({
             }`}
             style={{ width: `${Math.min((percRealizado ?? 0) * 100, 100)}%` }}
           />
+          {expectedPercent != null && expectedPercent > 0 && expectedPercent < 1 && (
+            <div
+              className="absolute top-[-3px] w-0.5 h-[16px] bg-slate-900/50 rounded-full"
+              style={{ left: `${expectedPercent * 100}%` }}
+              title={`Esperado: ${(expectedPercent * 100).toFixed(0)}% do período`}
+            />
+          )}
         </div>
       )}
 

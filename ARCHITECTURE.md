@@ -128,7 +128,7 @@ CREATE TABLE vendas (
   representante   TEXT,
   valor_total     NUMERIC(12,2) NOT NULL DEFAULT 0,
   receitas        NUMERIC(12,2) DEFAULT 0,
-  faturamento     NUMERIC(12,2) DEFAULT 0,
+  faturamento     NUMERIC(12,2) DEFAULT 0,  -- populado com "Valor Total" do Excel
   situacao        TEXT,            -- 'Aberta' ou 'Fechada'
   upload_id       UUID REFERENCES uploads(id) ON DELETE CASCADE,
   updated_at      TIMESTAMPTZ DEFAULT now()
@@ -164,8 +164,8 @@ CREATE TABLE metas (
   updated_at      TIMESTAMPTZ DEFAULT now(),
   UNIQUE (ano, mes, setor_grupo)
 );
--- WT (Welcome Trips) é calculado automaticamente: fat_meta = soma(CORP+TRIPS+WEDDINGS),
--- receita_meta_pct = média ponderada pelo faturamento. Na UI a coluna WT é read-only.
+-- WT (Welcome Group) é calculado automaticamente: fat_meta = soma(CORP+TRIPS+WEDDINGS),
+-- receita_meta_pct = média ponderada pelo valor total. Na UI a coluna WT é read-only.
 ```
 
 ---

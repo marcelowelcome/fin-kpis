@@ -104,10 +104,15 @@ export default function DashboardPage() {
       <div id="dashboard-content" className="space-y-6">
 
         {/* === GROUP TAB === */}
-        {activeTab === 'group' && (
+        {activeTab === 'group' && (() => {
+          const f = data?.forecast?.total
+          const expectedPct = f && (f.diasDecorridos + f.diasRestantes) > 0
+            ? f.diasDecorridos / (f.diasDecorridos + f.diasRestantes)
+            : null
+          return (
           <div className="space-y-6">
             <KPICard
-              label="Welcome Trips (Consolidado)"
+              label="Welcome Group (Consolidado)"
               fatMeta={data?.consolidado.fatMeta ?? 0}
               fatRealizado={data?.consolidado.fatRealizado ?? 0}
               percRealizado={data?.consolidado.percRealizado ?? null}
@@ -118,6 +123,7 @@ export default function DashboardPage() {
               nVendas={data?.consolidado.nVendas}
               delta={data?.delta?.consolidado}
               deltaLabel={data?.deltaLabel}
+              expectedPercent={expectedPct}
               loading={loading}
               accent="#1e293b"
             />
@@ -151,7 +157,8 @@ export default function DashboardPage() {
                 ticketMedio={data?.corp.ticketMedio}
                 nVendas={data?.corp.nVendas}
                 delta={data?.delta?.corp}
-              deltaLabel={data?.deltaLabel}
+                deltaLabel={data?.deltaLabel}
+                expectedPercent={expectedPct}
                 loading={loading}
                 accent="#3b82f6"
               />
@@ -166,7 +173,8 @@ export default function DashboardPage() {
                 ticketMedio={data?.trips.ticketMedio}
                 nVendas={data?.trips.nVendas}
                 delta={data?.delta?.trips}
-              deltaLabel={data?.deltaLabel}
+                deltaLabel={data?.deltaLabel}
+                expectedPercent={expectedPct}
                 loading={loading}
                 accent="#10b981"
               />
@@ -181,7 +189,8 @@ export default function DashboardPage() {
                 ticketMedio={data?.weddings.ticketMedio}
                 nVendas={data?.weddings.nVendas}
                 delta={data?.delta?.weddings}
-              deltaLabel={data?.deltaLabel}
+                deltaLabel={data?.deltaLabel}
+                expectedPercent={expectedPct}
                 loading={loading}
                 accent="#D4AC0D"
               />
@@ -193,10 +202,16 @@ export default function DashboardPage() {
               <TopProdutos produtos={data?.topProdutos?.total ?? []} loading={loading} />
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* === TRIPS TAB === */}
-        {activeTab === 'trips' && (
+        {activeTab === 'trips' && (() => {
+          const f = data?.forecast?.trips
+          const expectedPct = f && (f.diasDecorridos + f.diasRestantes) > 0
+            ? f.diasDecorridos / (f.diasDecorridos + f.diasRestantes)
+            : null
+          return (
           <div className="space-y-6">
             <KPICard
               label="Trips — Lazer & Expedições"
@@ -210,6 +225,7 @@ export default function DashboardPage() {
               nVendas={data?.trips.nVendas}
               delta={data?.delta?.trips}
               deltaLabel={data?.deltaLabel}
+              expectedPercent={expectedPct}
               loading={loading}
               accent="#10b981"
             >
@@ -240,10 +256,16 @@ export default function DashboardPage() {
               <TopProdutos produtos={data?.topProdutos?.trips ?? []} loading={loading} />
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* === WEDDINGS TAB === */}
-        {activeTab === 'weddings' && (
+        {activeTab === 'weddings' && (() => {
+          const f = data?.forecast?.weddings
+          const expectedPct = f && (f.diasDecorridos + f.diasRestantes) > 0
+            ? f.diasDecorridos / (f.diasDecorridos + f.diasRestantes)
+            : null
+          return (
           <div className="space-y-6">
             <KPICard
               label="Weddings"
@@ -257,6 +279,7 @@ export default function DashboardPage() {
               nVendas={data?.weddings.nVendas}
               delta={data?.delta?.weddings}
               deltaLabel={data?.deltaLabel}
+              expectedPercent={expectedPct}
               loading={loading}
               accent="#D4AC0D"
             >
@@ -321,10 +344,16 @@ export default function DashboardPage() {
               <TopProdutos produtos={data?.topProdutos?.weddings ?? []} loading={loading} />
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* === CORP TAB === */}
-        {activeTab === 'corp' && (
+        {activeTab === 'corp' && (() => {
+          const f = data?.forecast?.corp
+          const expectedPct = f && (f.diasDecorridos + f.diasRestantes) > 0
+            ? f.diasDecorridos / (f.diasDecorridos + f.diasRestantes)
+            : null
+          return (
           <div className="space-y-6">
             <KPICard
               label="Corporativo"
@@ -338,6 +367,7 @@ export default function DashboardPage() {
               nVendas={data?.corp.nVendas}
               delta={data?.delta?.corp}
               deltaLabel={data?.deltaLabel}
+              expectedPercent={expectedPct}
               loading={loading}
               accent="#3b82f6"
             />
@@ -360,7 +390,8 @@ export default function DashboardPage() {
               <TopProdutos produtos={data?.topProdutos?.corp ?? []} loading={loading} />
             </div>
           </div>
-        )}
+          )
+        })()}
 
       </div>
     </div>

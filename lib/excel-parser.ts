@@ -135,7 +135,7 @@ function parseRow(raw: Record<string, unknown>): VendaInput | null {
       representante: toStringOrNull(raw['Representante']),
       valor_total: toNumber(raw['Valor Total']) ?? 0,
       receitas: toNumber(raw['Receitas']) ?? 0,
-      faturamento: toNumber(raw['Faturamento']) ?? 0,
+      faturamento: toNumber(raw['Valor Total']) ?? 0,
       situacao: toStringOrNull(raw['Situação'] ?? raw['Situacao'] ?? raw['situacao']),
     }
   } catch {
