@@ -48,24 +48,27 @@ export async function GET(request: NextRequest) {
     const metas = await fetchMetas(supabase, range.meses)
 
     // 3.5. Se filtro por vendedor ativo, substituir metas pelos vendor_goals individuais
-    //       A meta do vendedor é global (não por setor). Como METAS_WT_AUTO = true
-    //       faz WT = CORP + TRIPS + WEDDINGS, colocamos a meta APENAS em WT
-    //       e zeramos os setores, para que o consolidado mostre o valor correto.
+    //       A meta do vendedor é global — replicar para WT + cada setor para que
+    //       todas as abas mostrem a meta. wtMetaDireta=true garante que o consolidado
+    //       use getMeta('WT') direto, sem somar CORP+TRIPS+WEDDINGS.
     let metasEfetivas = metas
     let vendorMetaOverride = false
     if (vendedorParam) {
       const vgForVendor = await fetchVendorGoalsForVendor(supabase, range.meses, vendedorParam)
       if (vgForVendor.length > 0) {
         vendorMetaOverride = true
-        metasEfetivas = vgForVendor.map((vg) => ({
-          id: vg.id,
-          ano: vg.ano,
-          mes: vg.mes,
-          setor_grupo: 'WT' as string,
-          fat_meta: vg.fat_meta,
-          receita_meta_pct: vg.receita_meta_pct,
-          updated_at: vg.updated_at,
-        })) as Meta[]
+        const SETORES_VENDEDOR = ['WT', 'CORP', 'TRIPS', 'WEDDINGS'] as const
+        metasEfetivas = vgForVendor.flatMap((vg) =>
+          SETORES_VENDEDOR.map((setor) => ({
+            id: vg.id,
+            ano: vg.ano,
+            mes: vg.mes,
+            setor_grupo: setor as string,
+            fat_meta: vg.fat_meta,
+            receita_meta_pct: vg.receita_meta_pct,
+            updated_at: vg.updated_at,
+          }))
+        ) as Meta[]
       }
     }
 
@@ -91,15 +94,18 @@ export async function GET(request: NextRequest) {
       if (vendedorParam) {
         // Buscar vendor_goals para todos os meses do trend (não só o mês corrente)
         const vgTrend = await fetchVendorGoalsForVendor(supabase, trendRange.meses, vendedorParam)
-        trendMetas = vgTrend.map((vg) => ({
-          id: vg.id,
-          ano: vg.ano,
-          mes: vg.mes,
-          setor_grupo: 'WT' as string,
-          fat_meta: vg.fat_meta,
-          receita_meta_pct: vg.receita_meta_pct,
-          updated_at: vg.updated_at,
-        })) as Meta[]
+        const SETORES_VENDEDOR = ['WT', 'CORP', 'TRIPS', 'WEDDINGS'] as const
+        trendMetas = vgTrend.flatMap((vg) =>
+          SETORES_VENDEDOR.map((setor) => ({
+            id: vg.id,
+            ano: vg.ano,
+            mes: vg.mes,
+            setor_grupo: setor as string,
+            fat_meta: vg.fat_meta,
+            receita_meta_pct: vg.receita_meta_pct,
+            updated_at: vg.updated_at,
+          }))
+        ) as Meta[]
       } else {
         trendMetas = await fetchMetas(supabase, trendRange.meses)
       }
