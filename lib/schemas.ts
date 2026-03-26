@@ -140,6 +140,14 @@ export interface Meta {
 // Metas por Vendedor (vendor_goals)
 // =============================================================
 
+export const TIPO_META_OPTIONS = ['valor_total', 'receita'] as const
+export type TipoMeta = (typeof TIPO_META_OPTIONS)[number]
+
+export const TIPO_META_LABELS: Record<TipoMeta, string> = {
+  valor_total: 'Valor Total',
+  receita: 'Receita',
+}
+
 export interface VendorGoal {
   id: string
   ano: number
@@ -147,6 +155,7 @@ export interface VendorGoal {
   vendedor: string
   fat_meta: number
   receita_meta_pct: number  // ex: 0.14 = 14%
+  tipo_meta: TipoMeta       // 'valor_total' ou 'receita'
   updated_at: string
 }
 
@@ -156,6 +165,7 @@ export const VendorGoalInputSchema = z.object({
   vendedor: z.string().min(1, 'Vendedor é obrigatório'),
   fat_meta: z.number().min(0),
   receita_meta_pct: z.number().min(0).max(1).default(0),
+  tipo_meta: z.enum(['valor_total', 'receita']).default('valor_total'),
 })
 
 export type VendorGoalInput = z.infer<typeof VendorGoalInputSchema>

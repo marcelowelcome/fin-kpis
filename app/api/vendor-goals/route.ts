@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
           vendedor: g.vendedor,
           fat_meta: g.fat_meta,
           receita_meta_pct: g.receita_meta_pct ?? 0,
+          tipo_meta: g.tipo_meta ?? 'valor_total',
           updated_at: new Date().toISOString(),
         })),
         { onConflict: 'ano,mes,vendedor' }

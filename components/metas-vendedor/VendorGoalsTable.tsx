@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { Search, Copy, Trash2 } from 'lucide-react'
-import type { VendorGoal, VendorGoalInput } from '@/lib/schemas'
+import type { VendorGoal, VendorGoalInput, TipoMeta } from '@/lib/schemas'
+import { TIPO_META_LABELS } from '@/lib/schemas'
 import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
 
 interface VendorGoalsTableProps {
@@ -16,18 +17,26 @@ interface VendorGoalsTableProps {
 const MESES_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: VendorGoalsTableProps) {
-  // fatData: "vendedor|mes" → number
   const [fatData, setFatData] = useState<Record<string, number>>({})
+  const [tipoData, setTipoData] = useState<Record<string, TipoMeta>>({})
   const [hasChanges, setHasChanges] = useState(false)
   const [search, setSearch] = useState('')
 
   // Inicializar com dados do banco
   useEffect(() => {
     const fat: Record<string, number> = {}
+    const tipos: Record<string, TipoMeta> = {}
+
     goals.forEach((g) => {
       fat[`${g.vendedor}|${g.mes}`] = g.fat_meta
+      // tipo_meta é por vendedor (mesmo para todos os meses), pegar o primeiro
+      if (!tipos[g.vendedor]) {
+        tipos[g.vendedor] = g.tipo_meta ?? 'valor_total'
+      }
     })
+
     setFatData(fat)
+    setTipoData(tipos)
     setHasChanges(false)
   }, [goals])
 
@@ -39,22 +48,27 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     setHasChanges(true)
   }
 
+  const getTipo = (vendedor: string): TipoMeta =>
+    tipoData[vendedor] ?? 'valor_total'
+
+  const setTipo = (vendedor: string, tipo: TipoMeta) => {
+    setTipoData((prev) => ({ ...prev, [vendedor]: tipo }))
+    setHasChanges(true)
+  }
+
   const getTotal = (vendedor: string): number => {
     let sum = 0
     for (let m = 1; m <= 12; m++) sum += getFat(vendedor, m)
     return sum
   }
 
-  // Aplicar valor de um mês a todos os 12 meses do vendedor
   const applyToAllMonths = (vendedor: string) => {
-    // Pegar o primeiro mês com valor > 0
     let val = 0
     for (let m = 1; m <= 12; m++) {
       const v = getFat(vendedor, m)
       if (v > 0) { val = v; break }
     }
     if (val === 0) return
-
     setFatData((prev) => {
       const next = { ...prev }
       for (let m = 1; m <= 12; m++) next[`${vendedor}|${m}`] = val
@@ -63,7 +77,6 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     setHasChanges(true)
   }
 
-  // Limpar todas as metas de um vendedor
   const clearVendedor = (vendedor: string) => {
     setFatData((prev) => {
       const next = { ...prev }
@@ -73,26 +86,23 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     setHasChanges(true)
   }
 
-  // Todos os vendedores: quem já tem meta + quem tem vendas no ano
   const allVendedores = useMemo(() => {
     const names = new Set<string>(vendedores)
     goals.forEach((g) => names.add(g.vendedor))
     return Array.from(names).sort()
   }, [vendedores, goals])
 
-  // Filtro de busca
   const filteredVendedores = useMemo(() => {
     if (!search) return allVendedores
     const q = search.toLowerCase()
     return allVendedores.filter((v) => v.toLowerCase().includes(q))
   }, [allVendedores, search])
 
-  // Separar: vendedores com meta definida primeiro
   const sortedVendedores = useMemo(() => {
     return [...filteredVendedores].sort((a, b) => {
       const aHas = getTotal(a) > 0 ? 1 : 0
       const bHas = getTotal(b) > 0 ? 1 : 0
-      if (aHas !== bHas) return bHas - aHas // com meta primeiro
+      if (aHas !== bHas) return bHas - aHas
       return a.localeCompare(b)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -103,7 +113,8 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
     for (const vendedor of allVendedores) {
       const total = getTotal(vendedor)
-      if (total === 0) continue // não salvar vendedores sem meta
+      if (total === 0) continue
+      const tipo = getTipo(vendedor)
       for (let mes = 1; mes <= 12; mes++) {
         goalsToSave.push({
           ano,
@@ -111,6 +122,7 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
           vendedor,
           fat_meta: getFat(vendedor, mes),
           receita_meta_pct: 0,
+          tipo_meta: tipo,
         })
       }
     }
@@ -149,13 +161,13 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
         </div>
       </div>
 
-      {/* Table: vendedores nas linhas, meses nas colunas */}
+      {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[220px]">
+                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[280px]">
                   Vendedor
                 </th>
                 {MESES_SHORT.map((m, i) => (
@@ -173,12 +185,13 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
               {sortedVendedores.map((vendedor, idx) => {
                 const total = getTotal(vendedor)
                 const hasGoal = total > 0
+                const tipo = getTipo(vendedor)
                 return (
                   <tr
                     key={vendedor}
                     className={`group transition-colors ${hasGoal ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30`}
                   >
-                    {/* Vendedor name + avatar */}
+                    {/* Vendedor name + avatar + tipo toggle */}
                     <td className="px-4 py-2 sticky left-0 z-10 bg-inherit">
                       <div className="flex items-center gap-2.5">
                         <div
@@ -188,9 +201,29 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                         >
                           {getInitials(vendedor)}
                         </div>
-                        <span className="text-sm font-medium text-slate-700 truncate max-w-[150px]" title={vendedor}>
-                          {vendedor}
-                        </span>
+                        <div className="min-w-0">
+                          <span className="text-sm font-medium text-slate-700 truncate block max-w-[140px]" title={vendedor}>
+                            {vendedor}
+                          </span>
+                          {/* Tipo meta toggle */}
+                          <div className="flex items-center gap-0.5 mt-0.5">
+                            {(['valor_total', 'receita'] as TipoMeta[]).map((t) => (
+                              <button
+                                key={t}
+                                onClick={() => setTipo(vendedor, t)}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                  tipo === t
+                                    ? t === 'valor_total'
+                                      ? 'bg-blue-100 text-blue-700'
+                                      : 'bg-emerald-100 text-emerald-700'
+                                    : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {TIPO_META_LABELS[t]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </td>
 
@@ -213,8 +246,19 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                     })}
 
                     {/* Total */}
-                    <td className="px-3 py-2 text-right font-semibold text-slate-900 tabular-nums border-l border-slate-200 whitespace-nowrap">
-                      {total > 0 ? formatBRL(total) : <span className="text-slate-300">—</span>}
+                    <td className="px-3 py-2 text-right border-l border-slate-200 whitespace-nowrap">
+                      {total > 0 ? (
+                        <div>
+                          <span className="font-semibold text-slate-900 tabular-nums">{formatBRL(total)}</span>
+                          <span className={`block text-[10px] font-medium ${
+                            tipo === 'receita' ? 'text-emerald-600' : 'text-blue-600'
+                          }`}>
+                            {TIPO_META_LABELS[tipo]}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
 
                     {/* Actions */}

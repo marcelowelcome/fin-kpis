@@ -6,6 +6,7 @@ import { formatBRL, formatPercent, getInitials, AVATAR_COLORS, getPercentColor }
 interface VendedorWithGoal extends VendedorRanking {
   fatMeta?: number | null
   percRealizado?: number | null
+  tipoMeta?: string | null  // 'valor_total' ou 'receita'
 }
 
 interface TopVendedoresProps {
@@ -118,6 +119,13 @@ export function TopVendedores({ vendedores, loading = false, activeVendedor, onS
                       v.percRealizado != null ? getPercentColor(v.percRealizado) : 'text-slate-400'
                     }`}>
                       {v.percRealizado != null ? formatPercent(v.percRealizado) : '—'}
+                    </span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded font-medium shrink-0 ${
+                      v.tipoMeta === 'receita'
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : 'bg-blue-50 text-blue-600'
+                    }`}>
+                      {v.tipoMeta === 'receita' ? 'Rec' : 'VT'}
                     </span>
                   </div>
                 )}

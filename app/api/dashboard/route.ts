@@ -105,19 +105,30 @@ export async function GET(request: NextRequest) {
     // 7.5. Enriquecer topVendedores com metas individuais (vendor_goals)
     const vgMeses = range.meses
     const vendorGoals = await fetchVendorGoals(supabase, vgMeses)
-    const vgMap = new Map<string, number>()
+    // Agregar meta e tipo por vendedor
+    const vgMap = new Map<string, { meta: number; tipo: string }>()
     for (const vg of vendorGoals) {
-      const existing = vgMap.get(vg.vendedor) ?? 0
-      vgMap.set(vg.vendedor, existing + vg.fat_meta)
+      const existing = vgMap.get(vg.vendedor)
+      if (existing) {
+        existing.meta += vg.fat_meta
+      } else {
+        vgMap.set(vg.vendedor, { meta: vg.fat_meta, tipo: vg.tipo_meta ?? 'valor_total' })
+      }
     }
-    // Attach fatMeta/percRealizado to each ranking entry
+    // Attach fatMeta/percRealizado/tipoMeta to each ranking entry
     for (const key of ['total', 'corp', 'trips', 'weddings'] as const) {
       data.topVendedores[key] = data.topVendedores[key].map((v) => {
-        const meta = vgMap.get(v.vendedor) ?? null
+        const vg = vgMap.get(v.vendedor)
+        if (!vg || vg.meta <= 0) {
+          return { ...v, fatMeta: null, percRealizado: null, tipoMeta: null }
+        }
+        // Comparar contra a métrica correta: valor_total (faturamento) ou receita
+        const realizado = vg.tipo === 'receita' ? v.receitas : v.faturamento
         return {
           ...v,
-          fatMeta: meta,
-          percRealizado: meta && meta > 0 ? v.faturamento / meta : null,
+          fatMeta: vg.meta,
+          percRealizado: realizado / vg.meta,
+          tipoMeta: vg.tipo,
         }
       })
     }
