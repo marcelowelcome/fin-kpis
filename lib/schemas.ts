@@ -277,6 +277,16 @@ export interface TrendSeries {
   weddings: TrendPoint[]
 }
 
+export interface DailyTrendPoint {
+  label: string      // "01", "02", ... or "01/Mar"
+  date: string       // "YYYY-MM-DD"
+  fatRealizado: number
+  fatAcumulado: number
+  metaAcumulada: number
+  receita: number
+  nVendas: number
+}
+
 export interface ForecastData {
   projecao: number
   ritmoAtual: number
@@ -321,6 +331,12 @@ export interface DashboardData {
     weddings: ProdutoRanking[]
   }
   trend: TrendSeries
+  dailyTrend?: {
+    total: DailyTrendPoint[]
+    corp: DailyTrendPoint[]
+    trips: DailyTrendPoint[]
+    weddings: DailyTrendPoint[]
+  } | null
   delta: {
     consolidado: DeltaData | null
     corp: DeltaData | null

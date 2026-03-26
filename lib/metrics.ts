@@ -10,6 +10,7 @@ import type {
   ProdutoRanking,
   TrendPoint,
   TrendSeries,
+  DailyTrendPoint,
   ForecastData,
   DeltaData,
   SemanasData,
@@ -176,6 +177,9 @@ export function calcDashboard(
     ? calcWeeklySeries(trendVendas, trendMetas)
     : calcMonthlySeries(trendVendas, trendMetas)
 
+  // Série diária (últimos 30 dias do período) — para visualização day-by-day
+  const dailyTrend = calcDailySeries(vendas, metas, periodo.inicio, periodo.fim)
+
   return {
     periodo,
     consolidado,
@@ -186,6 +190,7 @@ export function calcDashboard(
     topVendedores,
     topProdutos,
     trend,
+    dailyTrend,
     forecast,
     delta,
     deltaLabel: opts?.deltaLabel ?? null,
@@ -429,6 +434,82 @@ export function calcWeeklySeries(
     corp: buildPoints(['CORP']),
     trips: buildPoints(['TRIPS']),
     weddings: buildPoints(['WEDDINGS']),
+  }
+}
+
+// =============================================================
+// Série diária — evolução dia a dia com acumulado vs meta
+// =============================================================
+
+export function calcDailySeries(
+  vendas: VendaKPI[],
+  metas: Meta[],
+  inicio: string,
+  fim: string
+): { total: DailyTrendPoint[]; corp: DailyTrendPoint[]; trips: DailyTrendPoint[]; weddings: DailyTrendPoint[] } {
+  // Gerar lista de todos os dias no range
+  const days: string[] = []
+  const [sy, sm, sd] = inicio.split('-').map(Number)
+  const [ey, em, ed] = fim.split('-').map(Number)
+  const startDate = new Date(sy, sm - 1, sd)
+  const endDate = new Date(ey, em - 1, ed)
+  const cursor = new Date(startDate)
+  while (cursor <= endDate) {
+    days.push(localDateToISO(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  // Meta mensal do período (agrupar metas em um total por setor)
+  const metaTotal: Record<string, number> = {}
+  for (const m of metas) {
+    metaTotal[m.setor_grupo] = (metaTotal[m.setor_grupo] ?? 0) + m.fat_meta
+  }
+
+  function buildDaily(setores: string[]): DailyTrendPoint[] {
+    const filtered = vendas.filter((v) => setores.includes(v.setor_grupo))
+
+    // Agrupar por dia
+    const byDay: Record<string, { fat: number; rec: number; vendas: Set<number> }> = {}
+    for (const v of filtered) {
+      if (!byDay[v.data_venda]) byDay[v.data_venda] = { fat: 0, rec: 0, vendas: new Set() }
+      byDay[v.data_venda].fat += Number(v.faturamento) || 0
+      byDay[v.data_venda].rec += Number(v.receitas) || 0
+      byDay[v.data_venda].vendas.add(v.venda_numero)
+    }
+
+    // Meta total para estes setores
+    let totalMeta = 0
+    for (const s of setores) totalMeta += metaTotal[s] ?? 0
+    // Se não tem meta por setor, tentar WT
+    if (totalMeta === 0 && setores.length > 1) totalMeta = metaTotal['WT'] ?? 0
+
+    const totalDays = days.length
+    const dailyMeta = totalDays > 0 ? totalMeta / totalDays : 0
+
+    let acumulado = 0
+    return days.map((day, i) => {
+      const d = byDay[day]
+      const fat = d?.fat ?? 0
+      acumulado += fat
+      const dayNum = day.split('-')[2]
+
+      return {
+        label: dayNum,
+        date: day,
+        fatRealizado: fat,
+        fatAcumulado: acumulado,
+        metaAcumulada: dailyMeta * (i + 1),
+        receita: d?.rec ?? 0,
+        nVendas: d?.vendas.size ?? 0,
+      }
+    })
+  }
+
+  return {
+    total: buildDaily(['CORP', 'TRIPS', 'WEDDINGS']),
+    corp: buildDaily(['CORP']),
+    trips: buildDaily(['TRIPS']),
+    weddings: buildDaily(['WEDDINGS']),
   }
 }
 

@@ -133,6 +133,7 @@ export default function DashboardPage() {
               <div className="lg:col-span-2">
                 <MonthlyChart
                   data={data?.trend?.total ?? []}
+                  dailyData={data?.dailyTrend?.total}
                   color="#1e293b"
                   loading={loading}
                 />
@@ -240,7 +241,7 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
-                <MonthlyChart data={data?.trend?.trips ?? []} color="#10b981" loading={loading} />
+                <MonthlyChart data={data?.trend?.trips ?? []} dailyData={data?.dailyTrend?.trips} color="#10b981" loading={loading} />
               </div>
               <ForecastCard
                 data={data?.forecast?.trips ?? EMPTY_FORECAST}
@@ -294,7 +295,7 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
-                <MonthlyChart data={data?.trend?.weddings ?? []} color="#D4AC0D" loading={loading} />
+                <MonthlyChart data={data?.trend?.weddings ?? []} dailyData={data?.dailyTrend?.weddings} color="#D4AC0D" loading={loading} />
               </div>
               <ForecastCard
                 data={data?.forecast?.weddings ?? EMPTY_FORECAST}
@@ -374,7 +375,7 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
-                <MonthlyChart data={data?.trend?.corp ?? []} color="#3b82f6" loading={loading} />
+                <MonthlyChart data={data?.trend?.corp ?? []} dailyData={data?.dailyTrend?.corp} color="#3b82f6" loading={loading} />
               </div>
               <ForecastCard
                 data={data?.forecast?.corp ?? EMPTY_FORECAST}
