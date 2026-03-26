@@ -47,8 +47,27 @@ export async function GET(request: NextRequest) {
     // 3. Buscar metas dos meses abrangidos
     const metas = await fetchMetas(supabase, range.meses)
 
+    // 3.5. Se filtro por vendedor ativo, substituir metas pelos vendor_goals individuais
+    let metasEfetivas = metas
+    if (vendedorParam) {
+      const vgForVendor = await fetchVendorGoalsForVendor(supabase, range.meses, vendedorParam)
+      if (vgForVendor.length > 0) {
+        // Somar fat_meta do vendedor por mês, e distribuir como meta WT (consolidado)
+        // Cada setor recebe a meta inteira do vendedor (ele vende cross-setor)
+        metasEfetivas = vgForVendor.map((vg) => ({
+          id: vg.id,
+          ano: vg.ano,
+          mes: vg.mes,
+          setor_grupo: 'WT' as const,
+          fat_meta: vg.fat_meta,
+          receita_meta_pct: vg.receita_meta_pct,
+          updated_at: vg.updated_at,
+        }))
+      }
+    }
+
     // 4. Agregar metas se multi-mês
-    const metasAgg = range.meses.length > 1 ? aggregateMetas(metas) : metas
+    const metasAgg = range.meses.length > 1 ? aggregateMetas(metasEfetivas) : metasEfetivas
 
     // 5. Buscar período anterior para delta (comparação)
     const prevRange = getPreviousPeriodRange(periodo, range.inicio, range.fim)
@@ -65,8 +84,8 @@ export async function GET(request: NextRequest) {
       ? await fetchAllVendas(supabase, trendRange.inicio, trendRange.fim, vendedorParam)
       : vendas
     const trendMetas = trendRange
-      ? await fetchMetas(supabase, trendRange.meses)
-      : metas
+      ? (vendedorParam ? metasEfetivas : await fetchMetas(supabase, trendRange.meses))
+      : metasEfetivas
 
     // 7. Calcular KPIs com forecast, delta e trend
     const data = calcDashboard(
@@ -75,7 +94,7 @@ export async function GET(request: NextRequest) {
       { inicio: range.inicio, fim: range.fim, label: range.label },
       {
         vendasAnterior: vendasAnterior as VendaKPI[],
-        metasRaw: metas,
+        metasRaw: metasEfetivas,
         trendVendas: trendVendas as VendaKPI[],
         trendMetasRaw: trendMetas,
         trendTipo,
@@ -201,6 +220,39 @@ function aggregateMetas(metas: Meta[]): Meta[] {
     }
   }
   return Array.from(map.values())
+}
+
+async function fetchVendorGoalsForVendor(
+  sb: ReturnType<typeof getSupabaseServer>,
+  meses: { ano: number; mes: number }[],
+  vendedor: string
+): Promise<VendorGoal[]> {
+  if (meses.length === 0) return []
+
+  const byAno: Record<number, number[]> = {}
+  for (const { ano, mes } of meses) {
+    if (!byAno[ano]) byAno[ano] = []
+    byAno[ano].push(mes)
+  }
+
+  const all: VendorGoal[] = []
+  for (const anoStr of Object.keys(byAno)) {
+    const ano = Number(anoStr)
+    const months = byAno[ano]
+    const minM = Math.min(...months)
+    const maxM = Math.max(...months)
+    const { data } = await sb
+      .from('vendor_goals')
+      .select('*')
+      .eq('ano', ano)
+      .eq('vendedor', vendedor)
+      .gte('mes', minM)
+      .lte('mes', maxM)
+
+    if (data) all.push(...(data as VendorGoal[]))
+  }
+
+  return all
 }
 
 async function fetchVendorGoals(

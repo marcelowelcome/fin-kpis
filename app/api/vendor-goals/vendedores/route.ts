@@ -5,9 +5,12 @@ import { jsonError } from '@/lib/api-utils'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+const PAGE = 1000
+
 /**
  * GET /api/vendor-goals/vendedores?ano=2026
  * Retorna nomes distintos de vendedores que têm vendas no ano.
+ * Paginação determinística para garantir que todos os nomes são capturados.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -24,24 +27,32 @@ export async function GET(request: NextRequest) {
 
     const supabase = getSupabaseServer()
 
-    // Buscar vendedores distintos — usar select com limit alto
-    // Como é DISTINCT sobre text, resultado é < 1000 rows
-    const { data, error } = await supabase
-      .from('vendas')
-      .select('vendedor')
-      .gte('data_venda', inicio)
-      .lte('data_venda', fim)
-      .order('vendedor', { ascending: true })
-
-    if (error) {
-      return jsonError('DB_ERROR', error.message, 500)
-    }
-
-    // Extrair nomes únicos (Supabase não suporta DISTINCT via client)
+    // Paginação determinística — buscar todas as vendas e extrair nomes únicos
     const nameSet = new Set<string>()
-    for (const row of (data ?? []) as { vendedor: string }[]) {
-      if (row.vendedor) nameSet.add(row.vendedor)
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('vendas')
+        .select('id, vendedor')
+        .gte('data_venda', inicio)
+        .lte('data_venda', fim)
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE - 1)
+
+      if (error) {
+        return jsonError('DB_ERROR', error.message, 500)
+      }
+      if (!data || data.length === 0) break
+
+      for (const row of data as { id: number; vendedor: string }[]) {
+        if (row.vendedor) nameSet.add(row.vendedor)
+      }
+
+      if (data.length < PAGE) break
+      offset += PAGE
     }
+
     const uniqueNames = Array.from(nameSet).sort()
 
     return NextResponse.json({ vendedores: uniqueNames })
