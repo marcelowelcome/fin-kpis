@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, Plus } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { Search, Copy, Trash2 } from 'lucide-react'
 import type { VendorGoal, VendorGoalInput } from '@/lib/schemas'
-import { formatBRL } from '@/lib/format'
+import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
 
 interface VendorGoalsTableProps {
   goals: VendorGoal[]
@@ -13,90 +13,104 @@ interface VendorGoalsTableProps {
   onSave: (goals: VendorGoalInput[]) => Promise<boolean>
 }
 
-const MESES = [
-  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
-  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez',
-]
+const MESES_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: VendorGoalsTableProps) {
+  // fatData: "vendedor|mes" → number
   const [fatData, setFatData] = useState<Record<string, number>>({})
-  const [pctData, setPctData] = useState<Record<string, number>>({})
   const [hasChanges, setHasChanges] = useState(false)
-  const [selectedVendedores, setSelectedVendedores] = useState<string[]>([])
-  const [showDropdown, setShowDropdown] = useState(false)
   const [search, setSearch] = useState('')
 
   // Inicializar com dados do banco
   useEffect(() => {
     const fat: Record<string, number> = {}
-    const pct: Record<string, number> = {}
-    const nomes = new Set<string>()
-
     goals.forEach((g) => {
-      const key = `${g.mes}-${g.vendedor}`
-      fat[key] = g.fat_meta
-      pct[key] = g.receita_meta_pct
-      nomes.add(g.vendedor)
+      fat[`${g.vendedor}|${g.mes}`] = g.fat_meta
     })
-
     setFatData(fat)
-    setPctData(pct)
-    setSelectedVendedores(Array.from(nomes).sort())
     setHasChanges(false)
   }, [goals])
 
-  const getFat = (mes: number, vendedor: string): number =>
-    fatData[`${mes}-${vendedor}`] ?? 0
+  const getFat = (vendedor: string, mes: number): number =>
+    fatData[`${vendedor}|${mes}`] ?? 0
 
-  const getPct = (mes: number, vendedor: string): number =>
-    pctData[`${mes}-${vendedor}`] ?? 0
-
-  const setFat = (mes: number, vendedor: string, value: number) => {
-    setFatData((prev) => ({ ...prev, [`${mes}-${vendedor}`]: value }))
+  const setFat = (vendedor: string, mes: number, value: number) => {
+    setFatData((prev) => ({ ...prev, [`${vendedor}|${mes}`]: value }))
     setHasChanges(true)
   }
 
-  const setPct = (mes: number, vendedor: string, value: number) => {
-    setPctData((prev) => ({ ...prev, [`${mes}-${vendedor}`]: value }))
-    setHasChanges(true)
+  const getTotal = (vendedor: string): number => {
+    let sum = 0
+    for (let m = 1; m <= 12; m++) sum += getFat(vendedor, m)
+    return sum
   }
 
-  const addVendedor = (nome: string) => {
-    if (!selectedVendedores.includes(nome)) {
-      setSelectedVendedores((prev) => [...prev, nome].sort())
-      setHasChanges(true)
+  // Aplicar valor de um mês a todos os 12 meses do vendedor
+  const applyToAllMonths = (vendedor: string) => {
+    // Pegar o primeiro mês com valor > 0
+    let val = 0
+    for (let m = 1; m <= 12; m++) {
+      const v = getFat(vendedor, m)
+      if (v > 0) { val = v; break }
     }
-    setShowDropdown(false)
-    setSearch('')
-  }
+    if (val === 0) return
 
-  const removeVendedor = (nome: string) => {
-    setSelectedVendedores((prev) => prev.filter((v) => v !== nome))
-    // Limpar dados do vendedor removido
     setFatData((prev) => {
       const next = { ...prev }
-      for (let mes = 1; mes <= 12; mes++) delete next[`${mes}-${nome}`]
-      return next
-    })
-    setPctData((prev) => {
-      const next = { ...prev }
-      for (let mes = 1; mes <= 12; mes++) delete next[`${mes}-${nome}`]
+      for (let m = 1; m <= 12; m++) next[`${vendedor}|${m}`] = val
       return next
     })
     setHasChanges(true)
   }
+
+  // Limpar todas as metas de um vendedor
+  const clearVendedor = (vendedor: string) => {
+    setFatData((prev) => {
+      const next = { ...prev }
+      for (let m = 1; m <= 12; m++) delete next[`${vendedor}|${m}`]
+      return next
+    })
+    setHasChanges(true)
+  }
+
+  // Todos os vendedores: quem já tem meta + quem tem vendas no ano
+  const allVendedores = useMemo(() => {
+    const names = new Set<string>(vendedores)
+    goals.forEach((g) => names.add(g.vendedor))
+    return Array.from(names).sort()
+  }, [vendedores, goals])
+
+  // Filtro de busca
+  const filteredVendedores = useMemo(() => {
+    if (!search) return allVendedores
+    const q = search.toLowerCase()
+    return allVendedores.filter((v) => v.toLowerCase().includes(q))
+  }, [allVendedores, search])
+
+  // Separar: vendedores com meta definida primeiro
+  const sortedVendedores = useMemo(() => {
+    return [...filteredVendedores].sort((a, b) => {
+      const aHas = getTotal(a) > 0 ? 1 : 0
+      const bHas = getTotal(b) > 0 ? 1 : 0
+      if (aHas !== bHas) return bHas - aHas // com meta primeiro
+      return a.localeCompare(b)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredVendedores, fatData])
 
   const handleSave = async () => {
     const goalsToSave: VendorGoalInput[] = []
 
-    for (let mes = 1; mes <= 12; mes++) {
-      for (const vendedor of selectedVendedores) {
+    for (const vendedor of allVendedores) {
+      const total = getTotal(vendedor)
+      if (total === 0) continue // não salvar vendedores sem meta
+      for (let mes = 1; mes <= 12; mes++) {
         goalsToSave.push({
           ano,
           mes,
           vendedor,
-          fat_meta: getFat(mes, vendedor),
-          receita_meta_pct: getPct(mes, vendedor),
+          fat_meta: getFat(vendedor, mes),
+          receita_meta_pct: 0,
         })
       }
     }
@@ -105,67 +119,26 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     if (success) setHasChanges(false)
   }
 
-  // Vendedores disponíveis para adicionar (não selecionados ainda)
-  const availableVendedores = vendedores.filter(
-    (v) => !selectedVendedores.includes(v)
-  )
-  const filteredAvailable = search
-    ? availableVendedores.filter((v) =>
-        v.toLowerCase().includes(search.toLowerCase())
-      )
-    : availableVendedores
+  const vendedoresComMeta = allVendedores.filter((v) => getTotal(v) > 0).length
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-slate-700">
-          Metas por Vendedor — {ano}
-        </h3>
-        <div className="flex items-center gap-2">
-          {/* Adicionar vendedor */}
-          <div className="relative">
-            <button
-              onClick={() => setShowDropdown(!showDropdown)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-            >
-              <Plus size={14} />
-              Adicionar Vendedor
-            </button>
-            {showDropdown && (
-              <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-20">
-                <div className="p-2 border-b border-slate-100">
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Buscar vendedor..."
-                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-slate-400"
-                    autoFocus
-                  />
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {filteredAvailable.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-slate-400">
-                      {availableVendedores.length === 0
-                        ? 'Todos os vendedores já foram adicionados'
-                        : 'Nenhum resultado'}
-                    </p>
-                  ) : (
-                    filteredAvailable.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => addVendedor(v)}
-                        className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        {v}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
+    <div className="space-y-4">
+      {/* Header bar */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={`Buscar entre ${allVendedores.length} vendedores...`}
+            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-400 bg-white"
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">
+            {vendedoresComMeta} de {allVendedores.length} com meta
+          </span>
           <button
             onClick={handleSave}
             disabled={!hasChanges || saving}
@@ -176,134 +149,108 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
         </div>
       </div>
 
-      {/* Fechar dropdown ao clicar fora */}
-      {showDropdown && (
-        <div className="fixed inset-0 z-10" onClick={() => { setShowDropdown(false); setSearch('') }} />
-      )}
-
-      {selectedVendedores.length === 0 ? (
-        <div className="px-4 py-12 text-center">
-          <p className="text-sm text-slate-400">
-            Nenhum vendedor adicionado. Clique em &quot;Adicionar Vendedor&quot; para começar.
-          </p>
-        </div>
-      ) : (
+      {/* Table: vendedores nas linhas, meses nas colunas */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10">
-                  Mês
+                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[220px]">
+                  Vendedor
                 </th>
-                {selectedVendedores.map((vendedor) => (
-                  <th
-                    key={vendedor}
-                    colSpan={2}
-                    className="px-2 py-3 text-center font-medium text-slate-600 border-l border-slate-200"
-                  >
-                    <div className="flex items-center justify-center gap-1">
-                      <span className="truncate max-w-[120px]" title={vendedor}>
-                        {vendedor}
-                      </span>
-                      <button
-                        onClick={() => removeVendedor(vendedor)}
-                        className="p-0.5 text-slate-400 hover:text-red-500 transition-colors shrink-0"
-                        title="Remover vendedor"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
+                {MESES_SHORT.map((m, i) => (
+                  <th key={i} className="px-1 py-3 text-center font-medium text-slate-600 min-w-[90px]">
+                    {m}
                   </th>
                 ))}
-              </tr>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="px-4 py-1 sticky left-0 bg-slate-50 z-10" />
-                {selectedVendedores.map((vendedor) => (
-                  <th key={vendedor} colSpan={2} className="border-l border-slate-200">
-                    <div className="flex">
-                      <span className="flex-1 px-2 py-1 text-xs font-normal text-slate-500 text-right">
-                        Meta VT
-                      </span>
-                      <span className="w-16 px-1 py-1 text-xs font-normal text-slate-500 text-right">
-                        % Rec
-                      </span>
-                    </div>
-                  </th>
-                ))}
+                <th className="px-3 py-3 text-right font-medium text-slate-600 min-w-[110px] border-l border-slate-200">
+                  Total Ano
+                </th>
+                <th className="px-2 py-3 text-center font-medium text-slate-400 min-w-[70px]" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {MESES.map((mesLabel, i) => {
-                const mes = i + 1
+              {sortedVendedores.map((vendedor, idx) => {
+                const total = getTotal(vendedor)
+                const hasGoal = total > 0
                 return (
-                  <tr key={mes} className="hover:bg-slate-50">
-                    <td className="px-4 py-2 font-medium text-slate-700 sticky left-0 bg-white z-10">
-                      {mesLabel}
+                  <tr
+                    key={vendedor}
+                    className={`group transition-colors ${hasGoal ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30`}
+                  >
+                    {/* Vendedor name + avatar */}
+                    <td className="px-4 py-2 sticky left-0 z-10 bg-inherit">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${
+                            AVATAR_COLORS[idx % AVATAR_COLORS.length]
+                          }`}
+                        >
+                          {getInitials(vendedor)}
+                        </div>
+                        <span className="text-sm font-medium text-slate-700 truncate max-w-[150px]" title={vendedor}>
+                          {vendedor}
+                        </span>
+                      </div>
                     </td>
-                    {selectedVendedores.map((vendedor) => (
-                      <td
-                        key={vendedor}
-                        colSpan={2}
-                        className="px-1 py-1 border-l border-slate-200"
-                      >
-                        <div className="flex items-center gap-1">
+
+                    {/* 12 month inputs */}
+                    {MESES_SHORT.map((_, mi) => {
+                      const mes = mi + 1
+                      return (
+                        <td key={mes} className="px-1 py-1">
                           <input
                             type="number"
                             min={0}
                             step={1000}
-                            value={getFat(mes, vendedor) || ''}
-                            onChange={(e) =>
-                              setFat(mes, vendedor, parseFloat(e.target.value) || 0)
-                            }
-                            className="flex-1 text-right px-2 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+                            value={getFat(vendedor, mes) || ''}
+                            onChange={(e) => setFat(vendedor, mes, parseFloat(e.target.value) || 0)}
+                            className="w-full text-right px-1.5 py-1 border border-slate-200 rounded text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
                             placeholder="0"
                           />
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={
-                              getPct(mes, vendedor)
-                                ? +(getPct(mes, vendedor) * 100).toFixed(2)
-                                : ''
-                            }
-                            onChange={(e) => {
-                              const raw = parseFloat(e.target.value)
-                              setPct(mes, vendedor, isNaN(raw) ? 0 : raw / 100)
-                            }}
-                            className="w-16 text-right px-1 py-1 border border-slate-200 rounded text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
-                            placeholder="%"
-                          />
-                        </div>
-                      </td>
-                    ))}
+                        </td>
+                      )
+                    })}
+
+                    {/* Total */}
+                    <td className="px-3 py-2 text-right font-semibold text-slate-900 tabular-nums border-l border-slate-200 whitespace-nowrap">
+                      {total > 0 ? formatBRL(total) : <span className="text-slate-300">—</span>}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-2 py-2">
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => applyToAllMonths(vendedor)}
+                          className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                          title="Copiar 1o valor para todos os meses"
+                        >
+                          <Copy size={14} />
+                        </button>
+                        <button
+                          onClick={() => clearVendedor(vendedor)}
+                          className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                          title="Limpar metas deste vendedor"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })}
-              {/* Totais */}
-              <tr className="bg-slate-50 font-medium border-t border-slate-200">
-                <td className="px-4 py-3 text-slate-700 sticky left-0 bg-slate-50 z-10">Total</td>
-                {selectedVendedores.map((vendedor) => {
-                  const total = Array.from({ length: 12 }).reduce<number>(
-                    (acc, _, idx) => acc + getFat(idx + 1, vendedor),
-                    0
-                  )
-                  return (
-                    <td
-                      key={vendedor}
-                      colSpan={2}
-                      className="px-2 py-3 text-right text-slate-700 border-l border-slate-200"
-                    >
-                      {formatBRL(total)}
-                    </td>
-                  )
-                })}
-              </tr>
+
+              {filteredVendedores.length === 0 && (
+                <tr>
+                  <td colSpan={15} className="px-4 py-8 text-center text-sm text-slate-400">
+                    Nenhum vendedor encontrado para &quot;{search}&quot;
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
-      )}
+      </div>
     </div>
   )
 }
