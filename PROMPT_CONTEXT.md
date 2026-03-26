@@ -215,13 +215,15 @@ null / ""         -> INDEFINIDO
 
 **Funcoes exportadas:**
 ```typescript
-calcSetorKPI(vendas: Venda[], meta: number, setorGrupos: SetorGrupo | SetorGrupo[]): SetorKPI
-calcDashboard(vendas: Venda[], metas: Meta[], periodo: { inicio: Date; fim: Date }): DashboardData
+calcSetorKPI(vendas: Venda[], meta: number, setorGrupos: SetorGrupo | SetorGrupo[], opts?: { receitaMetaPct?: number }): SetorKPI
+calcDashboard(vendas: Venda[], metas: Meta[], periodo: { inicio: string; fim: string }): DashboardData
 countContratos(vendas: Venda[]): number
 countTaxas(vendas: Venda[]): number
 calcSemanasMes(vendas: Venda[], ano: number, mes: number): SemanasData[]
-getPeriodDates(periodo: string, inicio?: string, fim?: string): { inicio: Date; fim: Date; label: string }
+getPeriodDates(periodo: string, inicio?: string, fim?: string): { inicio: string; fim: string; label: string }
 ```
+
+**NOTA:** Todas as datas sao strings ISO ("YYYY-MM-DD"), nunca Date objects (ver REGRA 1).
 
 **Regras criticas:**
 - WT = CORP + TRIPS + WEDDINGS. Nunca incluir OUTROS ou INDEFINIDO.
@@ -341,6 +343,29 @@ Retorna `{ saved: number }`.
 
 ---
 
+## MODULO 10b — `app/api/vendor-goals/route.ts` e `vendedores/route.ts` (IMPLEMENTADO)
+
+**Proposito:** CRUD de metas individuais por vendedor. Exporta `force-dynamic`.
+
+**GET `/api/vendor-goals?ano=2026&mes=3`:** Retorna `{ goals: VendorGoal[] }` para o mes/ano.
+
+**POST `/api/vendor-goals`:** Upsert de metas por vendedor.
+```typescript
+// Body
+{ goals: Array<{ ano: number, mes: number, vendedor: string, fat_meta: number, receita_meta_pct: number, tipo_meta: string }> }
+```
+Usa `supabase.from('vendor_goals').upsert(..., { onConflict: 'ano,mes,vendedor' })`.
+
+**GET `/api/vendor-goals/vendedores`:** Retorna lista de nomes distintos de vendedores para autocomplete.
+
+**Hook:** `useVendorGoals()` — fetch + mutacoes + autocomplete de vendedores.
+**Componente:** `VendorGoalsTable` — grid editavel com autocomplete de nome do vendedor.
+**Pagina:** `/metas-vendedor` — interface de gestao de metas por vendedor.
+
+**Dependencias:** `lib/supabase.ts`, `lib/schemas.ts`, `lib/api-utils.ts`
+
+---
+
 ## MODULO 11 — `app/api/qualidade/route.ts` (IMPLEMENTADO)
 
 **Proposito:** Score e timeline de qualidade dos uploads. Exporta `force-dynamic`.
@@ -408,7 +433,7 @@ interface KPICardProps {
 
 **UploadZone.tsx:** Drag & drop + click. Aceita .xlsx, max 5MB. Props: `onFile(file: File)`, `disabled`.
 
-**PreviewTable.tsx:** Exibe primeiras 20 linhas. Colunas: Venda Nr, Vendedor, Data, Pagante, Setor (badge colorido), Produto, Situacao (badge), Faturamento, Receita.
+**PreviewTable.tsx:** Exibe primeiras 20 linhas. Colunas: Venda Nr, Vendedor, Data, Pagante, Setor (badge colorido), Produto, Situacao (badge), Valor Total, Receita.
 
 **QualityReport.tsx:** Score (cor condicional), lista de alertas com SeverityBadge, ate 5 exemplos expandidos por alerta com venda_numero, vendedor, produto, detalhe.
 
@@ -450,7 +475,7 @@ interface KPICardProps {
 
 ```
 Contexto do projeto:
-- DashWT: Dashboard Executivo de Vendas da Welcome Trips
+- DashWT: Dashboard Executivo de Vendas da Welcome Group
 - Stack: Next.js 14 (App Router), Supabase, Vercel, TypeScript strict, Tailwind CSS, Recharts
 - Leia ARCHITECTURE.md e AGENT_INSTRUCTIONS.md antes de comecar
 

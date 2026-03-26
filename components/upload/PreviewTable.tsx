@@ -67,7 +67,7 @@ export function PreviewTable({ rows, totalLinhas }: PreviewTableProps) {
                     <span className="text-slate-400">-</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-right font-mono">{formatBRL(row.faturamento)}</td>
+                <td className="px-3 py-2 text-right font-mono">{formatBRL(row.valor_total)}</td>
                 <td className="px-3 py-2 text-right font-mono">{formatBRL(row.receitas)}</td>
               </tr>
             ))}

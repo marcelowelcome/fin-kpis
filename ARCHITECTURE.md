@@ -1,5 +1,5 @@
 # ARCHITECTURE.md — DashWT
-## Dashboard Executivo de Vendas · Welcome Trips
+## Dashboard Executivo de Vendas · Welcome Group
 
 > **Leia este arquivo antes de qualquer outro.** Ele é a fonte de verdade da arquitetura do projeto.
 > Última atualização: 2026-03-18
@@ -8,7 +8,7 @@
 
 ## 1. Visão Geral
 
-**DashWT** é um dashboard executivo web construído para substituir e evoluir o painel Excel de acompanhamento de vendas da Welcome Trips. É alimentado via upload de arquivos Excel exportados do sistema interno, com banco de dados no Supabase e hospedagem no Vercel.
+**DashWT** é um dashboard executivo web construído para substituir e evoluir o painel Excel de acompanhamento de vendas da Welcome Group. É alimentado via upload de arquivos Excel exportados do sistema interno, com banco de dados no Supabase e hospedagem no Vercel.
 
 | Atributo         | Valor                                         |
 |------------------|-----------------------------------------------|
@@ -34,6 +34,7 @@ fin-kpis/
 │   ├── vendedores/page.tsx         # Ranking completo de vendedores + filtros
 │   ├── upload/page.tsx             # Upload + Histórico de uploads
 │   ├── metas/page.tsx              # Gestão de metas mensais
+│   ├── metas-vendedor/page.tsx     # Metas individuais por vendedor
 │   ├── qualidade/page.tsx          # Painel de qualidade de dados
 │   ├── login/page.tsx              # Tela de login
 │   ├── layout.tsx                  # Layout raiz (sidebar + content)
@@ -49,6 +50,9 @@ fin-kpis/
 │       ├── insights/
 │       │   └── vendedores/route.ts # GET: ranking vendedores com filtros
 │       ├── metas/route.ts          # GET + POST: CRUD de metas
+│       ├── vendor-goals/
+│       │   ├── route.ts            # GET + POST: CRUD metas por vendedor
+│       │   └── vendedores/route.ts # GET: autocomplete nomes vendedores
 │       ├── qualidade/route.ts      # GET: score + timeline (usa calcScoreFromAlerts)
 │       └── vendas/route.ts         # GET: listagem filtrada para drill-down
 │
@@ -60,7 +64,8 @@ fin-kpis/
 │   ├── metrics.ts                  # KPIs, forecast, delta, pipeline, vendedores, produtos, monthly
 │   ├── data-quality.ts             # Qualidade + scoring (calcScoreFromAlerts)
 │   ├── format.ts                   # Formatadores BRL, %, data, cores, getInitials, AVATAR_COLORS
-│   └── api-utils.ts                # Shared API helpers: jsonError(), getAuthUser(), todayISO()
+│   ├── api-utils.ts                # Shared API helpers: jsonError(), getAuthUser(), todayISO()
+│   └── sidebar-context.tsx         # Context provider para sidebar state
 │
 ├── components/
 │   ├── dashboard/
@@ -79,6 +84,8 @@ fin-kpis/
 │   │   └── QualityReport.tsx       # Alertas com exemplos
 │   ├── metas/
 │   │   └── MetasTable.tsx          # Grid editável mês × setor (WT auto-soma, read-only)
+│   ├── metas-vendedor/
+│   │   └── VendorGoalsTable.tsx    # Grid editável metas individuais por vendedor
 │   ├── history/
 │   │   ├── UploadHistory.tsx       # Lista uploads + modal alertas
 │   │   └── DeleteConfirmModal.tsx  # Confirmação dupla de exclusão
@@ -91,7 +98,9 @@ fin-kpis/
 ├── hooks/
 │   ├── useDashboard.ts             # Fetch dashboard (cache: no-store)
 │   ├── useUpload.ts                # State machine de upload
-│   └── useMetas.ts                 # Fetch + mutações metas (cache: no-store)
+│   ├── useMetas.ts                 # Fetch + mutações metas (cache: no-store)
+│   ├── useVendorGoals.ts           # Fetch + mutações vendor_goals (cache: no-store)
+│   └── useAuth.ts                  # Auth state via Supabase
 │
 ├── supabase/
 │   ├── schema.sql                  # DDL completo
@@ -177,10 +186,12 @@ CREATE TABLE vendor_goals (
   vendedor         TEXT NOT NULL,
   fat_meta         NUMERIC(14,2) NOT NULL DEFAULT 0,
   receita_meta_pct NUMERIC(5,4) DEFAULT 0,
+  tipo_meta        TEXT DEFAULT 'fat',  -- 'fat' ou 'receita'
   updated_at       TIMESTAMPTZ DEFAULT now(),
   UNIQUE (ano, mes, vendedor)
 );
 -- Vendedor é TEXT livre (match exato com vendas.vendedor).
+-- tipo_meta: 'fat' = meta de faturamento, 'receita' = meta de receita.
 -- Usado no dashboard para enriquecer TopVendedores com meta individual.
 ```
 
@@ -239,7 +250,7 @@ interface DashboardData {
 ### Tipos auxiliares:
 ```typescript
 interface SetorKPI {
-  fatMeta, fatRealizado, percRealizado, receita, percReceita, ticketMedio, nVendas
+  fatMeta, fatRealizado, percRealizado, receita, percReceita, ticketMedio, nVendas, receitaMetaPct
 }
 
 interface PipelineData {
@@ -250,7 +261,7 @@ interface PipelineData {
 
 interface VendedorRanking {
   vendedor, faturamento, receitas, nVendas, ticketMedio,
-  fatMeta?, percRealizado?  // de vendor_goals, null se sem meta
+  fatMeta?, percRealizado?, tipoMeta?  // de vendor_goals, null se sem meta
 }
 
 interface ForecastData {

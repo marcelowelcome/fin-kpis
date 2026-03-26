@@ -69,7 +69,7 @@ export function Navigation() {
                 <BarChart3 size={18} strokeWidth={1.75} className="text-blue-400" />
                 <h1 className="text-lg font-bold tracking-tight">DashWT</h1>
               </div>
-              <p className="text-xs text-slate-400 mt-1">Welcome Trips</p>
+              <p className="text-xs text-slate-400 mt-1">Welcome Group</p>
             </>
           )}
         </div>

@@ -152,7 +152,7 @@ export function MetasTable({ metas, ano, saving, onSave }: MetasTableProps) {
                   <th key={setor} colSpan={2} className="border-l border-slate-200">
                     <div className="flex">
                       <span className="flex-1 px-2 py-1 text-xs font-normal text-slate-500 text-right">
-                        Fat. Meta
+                        Meta VT
                       </span>
                       <span className="w-16 px-1 py-1 text-xs font-normal text-slate-500 text-right">
                         % Rec
@@ -285,7 +285,7 @@ export function MetasTable({ metas, ano, saving, onSave }: MetasTableProps) {
                   <th key={sub.id} colSpan={2} className="border-l border-slate-200">
                     <div className="flex">
                       <span className="flex-1 px-2 py-1 text-xs font-normal text-slate-500 text-right">
-                        Fat. Meta
+                        Meta VT
                       </span>
                       <span className="w-16 px-1 py-1 text-xs font-normal text-slate-500 text-right">
                         % Rec

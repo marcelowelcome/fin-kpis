@@ -18,7 +18,7 @@ const geistMono = localFont({
 
 export const metadata: Metadata = {
   title: 'DashWT — Dashboard Executivo',
-  description: 'Dashboard Executivo de Vendas — Welcome Trips',
+  description: 'Dashboard Executivo de Vendas — Welcome Group',
 }
 
 export default function RootLayout({

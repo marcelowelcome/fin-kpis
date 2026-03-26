@@ -1,6 +1,6 @@
 -- =============================================================
 -- DashWT — Schema SQL
--- Dashboard Executivo de Vendas · Welcome Trips
+-- Dashboard Executivo de Vendas · Welcome Group
 -- =============================================================
 -- NOTA: Venda Nº é o número do pedido, não um ID único por linha.
 -- Um pedido pode ter múltiplos itens/produtos. A chave primária
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS vendas (
   representante   TEXT,
   valor_total     NUMERIC(12,2) NOT NULL DEFAULT 0,
   receitas        NUMERIC(12,2) DEFAULT 0,
-  faturamento     NUMERIC(12,2) DEFAULT 0,
+  faturamento     NUMERIC(12,2) DEFAULT 0,  -- populado com "Valor Total" do Excel
   situacao        TEXT,                -- 'Aberta' ou 'Fechada' (status da venda)
   upload_id       UUID REFERENCES uploads(id) ON DELETE CASCADE,
   updated_at      TIMESTAMPTZ DEFAULT now()
@@ -50,11 +50,31 @@ CREATE INDEX IF NOT EXISTS idx_vendas_numero ON vendas(venda_numero);
 -- Tabela: metas
 -- Constraint única: exatamente uma meta por (ano, mês, setor)
 CREATE TABLE IF NOT EXISTS metas (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ano          INTEGER NOT NULL,
-  mes          INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
-  setor_grupo  TEXT NOT NULL CHECK (setor_grupo IN ('CORP', 'TRIPS', 'WEDDINGS', 'WT')),
-  fat_meta     NUMERIC(14,2) NOT NULL DEFAULT 0,
-  updated_at   TIMESTAMPTZ DEFAULT now(),
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ano              INTEGER NOT NULL,
+  mes              INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  setor_grupo      TEXT NOT NULL CHECK (setor_grupo IN (
+                     'CORP','TRIPS','WEDDINGS','WT',
+                     'WEDDINGS-WEDME','WEDDINGS-PRODUCAO',
+                     'WEDDINGS-PLANEJAMENTO','WEDDINGS-WEDDINGS')),
+  fat_meta         NUMERIC(14,2) NOT NULL DEFAULT 0,
+  receita_meta_pct NUMERIC(5,4) DEFAULT 0,  -- ex: 0.14 = 14%
+  updated_at       TIMESTAMPTZ DEFAULT now(),
   UNIQUE (ano, mes, setor_grupo)
 );
+
+-- Tabela: vendor_goals — metas individuais por vendedor
+CREATE TABLE IF NOT EXISTS vendor_goals (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ano              INTEGER NOT NULL,
+  mes              INTEGER NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  vendedor         TEXT NOT NULL,
+  fat_meta         NUMERIC(14,2) NOT NULL DEFAULT 0,
+  receita_meta_pct NUMERIC(5,4) DEFAULT 0,
+  tipo_meta        TEXT NOT NULL DEFAULT 'valor_total' CHECK (tipo_meta IN ('valor_total', 'receita')),
+  updated_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (ano, mes, vendedor)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_goals_ano ON vendor_goals(ano);
+CREATE INDEX IF NOT EXISTS idx_vendor_goals_vendedor ON vendor_goals(vendedor);

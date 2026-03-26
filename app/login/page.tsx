@@ -43,7 +43,7 @@ export default function LoginPage() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
           <div className="text-center mb-8">
             <h1 className="text-2xl font-bold text-slate-900">DashWT</h1>
-            <p className="text-sm text-slate-500 mt-1">Welcome Trips</p>
+            <p className="text-sm text-slate-500 mt-1">Welcome Group</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">

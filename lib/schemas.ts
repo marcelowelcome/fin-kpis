@@ -248,6 +248,9 @@ export interface VendedorRanking {
   receitas: number
   nVendas: number
   ticketMedio: number
+  fatMeta?: number | null       // de vendor_goals, null se sem meta
+  percRealizado?: number | null // realizado / fatMeta
+  tipoMeta?: string | null      // 'valor_total' ou 'receita'
 }
 
 export interface ProdutoRanking {

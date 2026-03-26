@@ -128,7 +128,7 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ### REGRA 14 — Metas por Vendedor (vendor_goals)
 
-- Tabela `vendor_goals` (ano, mes, vendedor, fat_meta, receita_meta_pct). Vendedor é TEXT livre, match exato com `vendas.vendedor`.
+- Tabela `vendor_goals` (ano, mes, vendedor, fat_meta, receita_meta_pct, tipo_meta). Vendedor é TEXT livre, match exato com `vendas.vendedor`. `tipo_meta` indica se a meta é de faturamento ('fat') ou receita ('receita').
 - CRUD em `/api/vendor-goals` (GET/POST). Autocomplete de nomes em `/api/vendor-goals/vendedores`.
 - Hook: `useVendorGoals()`. Componente: `VendorGoalsTable`. Página: `/metas-vendedor`.
 - Dashboard: a API enriquece `topVendedores` com `fatMeta` e `percRealizado` do vendor_goals.
@@ -144,7 +144,7 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ---
 
-### REGRA 15 — VendaKPI vs Venda
+### REGRA 16 — VendaKPI vs Venda
 
 - `Venda` = tipo completo do banco (todas as colunas)
 - `VendaKPI` = tipo leve para cálculos (sem pagante, fornecedor, representante)
@@ -152,7 +152,7 @@ Dashboard usa state `activeTab` (group|trips|weddings|corp). Não criar rotas se
 
 ---
 
-### REGRA 16 — Export PDF
+### REGRA 17 — Export PDF
 
 Usa `html2canvas` + `jsPDF`. Captura `#dashboard-content` do DOM. Lazy-loaded (dynamic import).
 
@@ -203,7 +203,7 @@ Usa `html2canvas` + `jsPDF`. Captura `#dashboard-content` do DOM. Lazy-loaded (d
 |---------|-----------|-------------------|
 | Top clientes (pagante) | Alta | pagante (já existe) |
 | Gráficos adicionais (bar chart, sparklines) | Alta | Recharts já instalado |
-| Metas por vendedor | Alta | Nova tabela vendor_goals |
+| ~~Metas por vendedor~~ | ~~Alta~~ | ~~DONE — vendor_goals + /metas-vendedor~~ |
 | Alertas automáticos | Média | Nova tabela alerts |
 | Análise de fornecedores | Média | fornecedor (já existe) |
 | Drill-down vendas (modal/page) | Média | API /api/vendas já existe |

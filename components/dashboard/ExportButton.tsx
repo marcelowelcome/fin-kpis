@@ -41,7 +41,7 @@ export function ExportButton({ targetId, filename = 'dashboard' }: ExportButtonP
       // Header
       pdf.setFontSize(10)
       pdf.setTextColor(100)
-      pdf.text('DashWT — Dashboard Executivo · Welcome Trips', 10, 8)
+      pdf.text('DashWT — Dashboard Executivo · Welcome Group', 10, 8)
       pdf.text(new Date().toLocaleDateString('pt-BR'), pageWidth - 10, 8, { align: 'right' })
 
       // Imagem do dashboard

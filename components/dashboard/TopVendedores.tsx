@@ -3,14 +3,8 @@
 import type { VendedorRanking } from '@/lib/schemas'
 import { formatBRL, formatPercent, getInitials, AVATAR_COLORS, getPercentColor } from '@/lib/format'
 
-interface VendedorWithGoal extends VendedorRanking {
-  fatMeta?: number | null
-  percRealizado?: number | null
-  tipoMeta?: string | null  // 'valor_total' ou 'receita'
-}
-
 interface TopVendedoresProps {
-  vendedores: VendedorWithGoal[]
+  vendedores: VendedorRanking[]
   loading?: boolean
   activeVendedor?: string | null
   onSelect?: (vendedor: string | null) => void
