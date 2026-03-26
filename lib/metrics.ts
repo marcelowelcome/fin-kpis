@@ -80,9 +80,23 @@ export function calcDashboard(
     wtMetaDireta?: boolean
   }
 ): DashboardData {
+  // Proporcionalizar metas quando o período é menor que um mês
+  // (ex: semana-atual = 7 dias de um mês de 31 → meta × 7/31)
+  const periodoInicio = periodo.inicio
+  const periodoFim = periodo.fim
+  const periodoDias = diffDays(periodoInicio, periodoFim) + 1
+
+  // Verificar se o período cabe dentro de um único mês
+  const mesInicio = periodoInicio.substring(0, 7) // "YYYY-MM"
+  const mesFim = periodoFim.substring(0, 7)
+  const isSingleMonth = mesInicio === mesFim
+  const [pAno, pMes] = periodoInicio.split('-').map(Number)
+  const diasNoMes = isSingleMonth ? new Date(pAno, pMes, 0).getDate() : 0
+  const metaRatio = (isSingleMonth && periodoDias < diasNoMes) ? periodoDias / diasNoMes : 1
+
   const getMeta = (setor: SetorMeta): number => {
     const meta = metas.find((m) => m.setor_grupo === setor)
-    return meta ? meta.fat_meta : 0
+    return meta ? meta.fat_meta * metaRatio : 0
   }
   const getReceitaPct = (setor: SetorMeta): number => {
     const meta = metas.find((m) => m.setor_grupo === setor)
