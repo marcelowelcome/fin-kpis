@@ -86,9 +86,29 @@ export async function GET(request: NextRequest) {
     const trendVendas = trendRange
       ? await fetchAllVendas(supabase, trendRange.inicio, trendRange.fim, vendedorParam)
       : vendas
-    const trendMetas = trendRange
-      ? (vendedorParam ? metasEfetivas : await fetchMetas(supabase, trendRange.meses))
-      : metasEfetivas
+    let trendMetas: Meta[]
+    if (trendRange) {
+      if (vendedorParam) {
+        // Buscar vendor_goals para todos os meses do trend (não só o mês corrente)
+        const vgTrend = await fetchVendorGoalsForVendor(supabase, trendRange.meses, vendedorParam)
+        const SETORES_VENDEDOR = ['WT', 'CORP', 'TRIPS', 'WEDDINGS'] as const
+        trendMetas = vgTrend.flatMap((vg) =>
+          SETORES_VENDEDOR.map((setor) => ({
+            id: vg.id,
+            ano: vg.ano,
+            mes: vg.mes,
+            setor_grupo: setor as string,
+            fat_meta: vg.fat_meta,
+            receita_meta_pct: vg.receita_meta_pct,
+            updated_at: vg.updated_at,
+          }))
+        ) as Meta[]
+      } else {
+        trendMetas = await fetchMetas(supabase, trendRange.meses)
+      }
+    } else {
+      trendMetas = metasEfetivas
+    }
 
     // 7. Calcular KPIs com forecast, delta e trend
     const data = calcDashboard(
