@@ -48,21 +48,24 @@ export async function GET(request: NextRequest) {
     const metas = await fetchMetas(supabase, range.meses)
 
     // 3.5. Se filtro por vendedor ativo, substituir metas pelos vendor_goals individuais
+    //       A meta do vendedor é global — replicar para WT + cada setor, assim
+    //       o KPI card de qualquer aba mostra a meta pessoal dele.
     let metasEfetivas = metas
     if (vendedorParam) {
       const vgForVendor = await fetchVendorGoalsForVendor(supabase, range.meses, vendedorParam)
       if (vgForVendor.length > 0) {
-        // Somar fat_meta do vendedor por mês, e distribuir como meta WT (consolidado)
-        // Cada setor recebe a meta inteira do vendedor (ele vende cross-setor)
-        metasEfetivas = vgForVendor.map((vg) => ({
-          id: vg.id,
-          ano: vg.ano,
-          mes: vg.mes,
-          setor_grupo: 'WT' as const,
-          fat_meta: vg.fat_meta,
-          receita_meta_pct: vg.receita_meta_pct,
-          updated_at: vg.updated_at,
-        }))
+        const SETORES_VENDEDOR = ['WT', 'CORP', 'TRIPS', 'WEDDINGS'] as const
+        metasEfetivas = vgForVendor.flatMap((vg) =>
+          SETORES_VENDEDOR.map((setor) => ({
+            id: vg.id,
+            ano: vg.ano,
+            mes: vg.mes,
+            setor_grupo: setor as string,
+            fat_meta: vg.fat_meta,
+            receita_meta_pct: vg.receita_meta_pct,
+            updated_at: vg.updated_at,
+          }))
+        ) as Meta[]
       }
     }
 
