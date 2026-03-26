@@ -106,28 +106,66 @@ export function KPICard({
         </p>
       </div>
 
-      {/* Progress bar with expected marker */}
-      {fatMeta > 0 && (
-        <div className="relative w-full h-2.5 bg-slate-100 rounded-full mb-4">
-          <div
-            className={`h-full rounded-full transition-all ${
-              percRealizado !== null && percRealizado >= 1
-                ? 'bg-green-500'
-                : percRealizado !== null && percRealizado >= 0.7
-                ? 'bg-amber-500'
-                : 'bg-red-500'
-            }`}
-            style={{ width: `${Math.min((percRealizado ?? 0) * 100, 100)}%` }}
-          />
-          {expectedPercent != null && expectedPercent > 0 && expectedPercent < 1 && (
+      {/* Progress bar with expected marker + hover tooltip */}
+      {fatMeta > 0 && (() => {
+        const expectedValue = expectedPercent != null ? fatMeta * expectedPercent : null
+        const aheadOfSchedule = expectedPercent != null && percRealizado != null
+          ? percRealizado >= expectedPercent
+          : null
+        const gap = expectedValue != null ? fatRealizado - expectedValue : null
+
+        return (
+          <div className="relative w-full h-2.5 bg-slate-100 rounded-full mb-4 group/bar">
             <div
-              className="absolute top-[-3px] w-0.5 h-[16px] bg-slate-900/50 rounded-full"
-              style={{ left: `${expectedPercent * 100}%` }}
-              title={`Esperado: ${(expectedPercent * 100).toFixed(0)}% do período`}
+              className={`h-full rounded-full transition-all ${
+                percRealizado !== null && percRealizado >= 1
+                  ? 'bg-green-500'
+                  : percRealizado !== null && percRealizado >= 0.7
+                  ? 'bg-amber-500'
+                  : 'bg-red-500'
+              }`}
+              style={{ width: `${Math.min((percRealizado ?? 0) * 100, 100)}%` }}
             />
-          )}
-        </div>
-      )}
+            {expectedPercent != null && expectedPercent > 0 && expectedPercent < 1 && (
+              <>
+                {/* Marker line */}
+                <div
+                  className="absolute top-[-3px] w-0.5 h-[16px] bg-slate-900/50 rounded-full"
+                  style={{ left: `${expectedPercent * 100}%` }}
+                />
+                {/* Hover tooltip */}
+                <div
+                  className="absolute bottom-full mb-2 opacity-0 group-hover/bar:opacity-100 transition-opacity pointer-events-none z-20"
+                  style={{ left: `${expectedPercent * 100}%`, transform: 'translateX(-50%)' }}
+                >
+                  <div className="bg-slate-900 text-white text-[11px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap leading-relaxed">
+                    <p className="font-medium mb-1">
+                      {(expectedPercent * 100).toFixed(0)}% do período decorrido
+                    </p>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-slate-400">Esperado:</span>
+                      <span className="font-semibold tabular-nums">{formatBRL(expectedValue ?? 0)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-slate-400">Realizado:</span>
+                      <span className="font-semibold tabular-nums">{formatBRL(fatRealizado)}</span>
+                    </div>
+                    {gap !== null && (
+                      <div className={`mt-1 pt-1 border-t border-slate-700 font-semibold ${
+                        aheadOfSchedule ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {aheadOfSchedule ? '+' : ''}{formatBRL(gap)} {aheadOfSchedule ? 'adiantado' : 'atrasado'}
+                      </div>
+                    )}
+                    {/* Arrow */}
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[5px] border-t-slate-900" />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Métricas secundárias */}
       <div className="grid grid-cols-2 gap-3 text-sm">
