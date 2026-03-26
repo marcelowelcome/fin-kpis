@@ -75,6 +75,8 @@ export function calcDashboard(
     trendMetasRaw?: Meta[]
     trendTipo?: 'mensal' | 'semanal'
     deltaLabel?: string | null
+    /** Quando true, WT meta vem direto de getMeta('WT'), não soma setores */
+    wtMetaDireta?: boolean
   }
 ): DashboardData {
   const getMeta = (setor: SetorMeta): number => {
@@ -97,9 +99,11 @@ export function calcDashboard(
     subcategorias: calcWeddingsSubcategorias(vendas, metas),
   }
 
-  const wtMeta = METAS_WT_AUTO
-    ? getMeta('CORP') + getMeta('TRIPS') + getMeta('WEDDINGS')
-    : getMeta('WT')
+  const wtMeta = opts?.wtMetaDireta
+    ? getMeta('WT')
+    : METAS_WT_AUTO
+      ? getMeta('CORP') + getMeta('TRIPS') + getMeta('WEDDINGS')
+      : getMeta('WT')
   const wtReceitaPct = getReceitaPct('WT') || getReceitaPct('WEDDINGS') // fallback
 
   const consolidado = calcSetorKPI(
