@@ -583,7 +583,7 @@ function diffDays(a: string, b: string): number {
 // Contadores de produtos-chave
 // =============================================================
 
-const PRODUTOS_CONTRATO = ['contrato de casamento', 'pacote de casamento']
+const PRODUTOS_CONTRATO = ['contrato de casamento']
 
 export function filterContratos(vendas: VendaKPI[]): VendaKPI[] {
   return vendas.filter(
