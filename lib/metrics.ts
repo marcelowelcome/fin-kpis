@@ -108,9 +108,11 @@ export function calcDashboard(
     ...calcSetorKPI(vendas, getMeta('TRIPS'), 'TRIPS', getReceitaPct('TRIPS')),
     nTaxas: countTaxas(vendas),
   }
+  const contratosDetalhes = filterContratos(vendas)
   const weddings: WeddingsKPI = {
     ...calcSetorKPI(vendas, getMeta('WEDDINGS'), 'WEDDINGS', getReceitaPct('WEDDINGS')),
-    nContratos: countContratos(vendas),
+    nContratos: contratosDetalhes.length,
+    contratosDetalhes,
     subcategorias: calcWeddingsSubcategorias(vendas, metas),
   }
 
@@ -583,13 +585,17 @@ function diffDays(a: string, b: string): number {
 
 const PRODUTOS_CONTRATO = ['contrato de casamento', 'pacote de casamento']
 
-export function countContratos(vendas: VendaKPI[]): number {
+export function filterContratos(vendas: VendaKPI[]): VendaKPI[] {
   return vendas.filter(
     (v) =>
       v.setor_grupo === 'WEDDINGS' &&
       v.produto !== null &&
       PRODUTOS_CONTRATO.includes(v.produto.toLowerCase())
-  ).length
+  )
+}
+
+export function countContratos(vendas: VendaKPI[]): number {
+  return filterContratos(vendas).length
 }
 
 export function countTaxas(vendas: VendaKPI[]): number {

@@ -233,6 +233,7 @@ export interface TripsKPI extends SetorKPI {
 
 export interface WeddingsKPI extends SetorKPI {
   nContratos: number
+  contratosDetalhes: VendaKPI[]
   subcategorias: Record<string, SetorKPI>
 }
 

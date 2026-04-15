@@ -11,6 +11,7 @@ import { ForecastCard } from '@/components/dashboard/ForecastCard'
 import { MonthlyChart } from '@/components/dashboard/MonthlyChart'
 import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
+import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
 
 const EMPTY_PIPELINE = {
@@ -287,7 +288,10 @@ export default function DashboardPage() {
               {data?.weddings.nContratos !== undefined && data.weddings.nContratos > 0 && (
                 <div className="mt-3 pt-3 border-t border-slate-100">
                   <p className="text-xs text-slate-500">
-                    Contratos: <strong className="text-slate-700">{data.weddings.nContratos}</strong>
+                    <ContratosPopover
+                      count={data.weddings.nContratos}
+                      contratos={data.weddings.contratosDetalhes ?? []}
+                    />
                   </p>
                 </div>
               )}
