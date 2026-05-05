@@ -87,7 +87,7 @@ export function ContratosPopover({ count, contratos }: Props) {
             </table>
           </div>
           <p className="text-[10px] text-slate-400 mt-2 px-1">
-            Filtro: setor_grupo = WEDDINGS e produto = "contrato de casamento"
+            Filtro: setor_grupo = WEDDINGS e produto = &quot;contrato de casamento&quot;
           </p>
         </div>
       )}
