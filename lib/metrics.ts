@@ -725,17 +725,85 @@ export function getPeriodRange(
   const todayStr = localDateToISO(now)
 
   switch (periodo) {
+    case 'hoje': {
+      return {
+        inicio: todayStr,
+        fim: todayStr,
+        label: 'Hoje',
+        meses: [{ ano: now.getFullYear(), mes: now.getMonth() + 1 }],
+      }
+    }
+    case 'ontem': {
+      const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+      const yestStr = localDateToISO(yest)
+      return {
+        inicio: yestStr,
+        fim: yestStr,
+        label: 'Ontem',
+        meses: [{ ano: yest.getFullYear(), mes: yest.getMonth() + 1 }],
+      }
+    }
     case 'semana-atual': {
       const day = now.getDay()
       const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (day === 0 ? 6 : day - 1))
       const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6)
       const inicio = localDateToISO(monday)
       const fim = localDateToISO(sunday)
+      const [ai, mi] = inicio.split('-').map(Number)
+      const [af, mf] = fim.split('-').map(Number)
       return {
         inicio,
         fim,
         label: `Semana ${getISOWeek(todayStr)}`,
-        meses: [{ ano: now.getFullYear(), mes: now.getMonth() + 1 }],
+        meses: buildMesesRange(ai, mi, af, mf),
+      }
+    }
+    case 'esta-semana-ate-hoje': {
+      // Domingo da semana atual → hoje
+      const day = now.getDay() // 0=domingo
+      const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day)
+      const inicio = localDateToISO(sunday)
+      const fim = todayStr
+      const [ai, mi] = inicio.split('-').map(Number)
+      const [af, mf] = fim.split('-').map(Number)
+      return {
+        inicio,
+        fim,
+        label: `Esta semana (dom. até hoje)`,
+        meses: buildMesesRange(ai, mi, af, mf),
+      }
+    }
+    case 'semana-passada': {
+      // Domingo da semana anterior → sábado
+      const day = now.getDay()
+      const sundayLast = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7)
+      const saturdayLast = new Date(sundayLast.getFullYear(), sundayLast.getMonth(), sundayLast.getDate() + 6)
+      const inicio = localDateToISO(sundayLast)
+      const fim = localDateToISO(saturdayLast)
+      const [ai, mi] = inicio.split('-').map(Number)
+      const [af, mf] = fim.split('-').map(Number)
+      return {
+        inicio,
+        fim,
+        label: 'Semana passada',
+        meses: buildMesesRange(ai, mi, af, mf),
+      }
+    }
+    case '7d':
+    case '14d':
+    case '30d':
+    case '90d': {
+      const days = parseInt(periodo, 10)
+      const inicioDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1))
+      const inicio = localDateToISO(inicioDate)
+      const fim = todayStr
+      const [ai, mi] = inicio.split('-').map(Number)
+      const [af, mf] = fim.split('-').map(Number)
+      return {
+        inicio,
+        fim,
+        label: `Últimos ${days} dias`,
+        meses: buildMesesRange(ai, mi, af, mf),
       }
     }
     case 'mes-corrente': {
@@ -751,6 +819,20 @@ export function getPeriodRange(
         meses: [{ ano, mes }],
       }
     }
+    case 'mes-passado': {
+      const ref = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const ano = ref.getFullYear()
+      const mes = ref.getMonth() + 1
+      const inicio = `${ano}-${pad(mes)}-01`
+      const lastDay = new Date(ano, mes, 0).getDate()
+      const fim = `${ano}-${pad(mes)}-${pad(lastDay)}`
+      return {
+        inicio,
+        fim,
+        label: ref.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
+        meses: [{ ano, mes }],
+      }
+    }
     case 'acumulado-ano': {
       const ano = now.getFullYear()
       const inicio = `${ano}-01-01`
@@ -760,6 +842,19 @@ export function getPeriodRange(
         fim,
         label: `Acumulado ${ano}`,
         meses: buildMesesRange(ano, 1, ano, now.getMonth() + 1),
+      }
+    }
+    case 'todo-periodo': {
+      // Sem registro mais antigo do banco — usar marco fixo. Janeiro/2024 cobre operação histórica.
+      const inicio = '2024-01-01'
+      const fim = todayStr
+      const [ai, mi] = inicio.split('-').map(Number)
+      const [af, mf] = fim.split('-').map(Number)
+      return {
+        inicio,
+        fim,
+        label: 'Todo o período',
+        meses: buildMesesRange(ai, mi, af, mf),
       }
     }
     case 'custom': {
@@ -795,8 +890,9 @@ export function calcTrendRange(
   inicio: string,
   fim: string
 ): { inicio: string; fim: string; meses: { ano: number; mes: number }[] } | null {
-  if (periodo === 'semana-atual') {
-    // Últimas 10 semanas antes do fim
+  // Presets curtos (≤ ~30 dias) → últimas 10 semanas
+  const SEMANAL_PRESETS = ['semana-atual', 'esta-semana-ate-hoje', 'semana-passada', 'hoje', 'ontem', '7d', '14d', '30d']
+  if (SEMANAL_PRESETS.includes(periodo)) {
     const [fy, fm, fd] = fim.split('-').map(Number)
     const inicioDate = new Date(fy, fm - 1, fd - 69) // 10 semanas = 70 dias
     const trendInicio = localDateToISO(inicioDate)
@@ -809,8 +905,8 @@ export function calcTrendRange(
       meses: buildMesesRange(ai, mi, af, mf),
     }
   }
-  if (periodo === 'mes-corrente') {
-    // Últimos 12 meses antes do fim
+  // Presets mensais → últimos 12 meses
+  if (periodo === 'mes-corrente' || periodo === 'mes-passado' || periodo === '90d') {
     const [fy, fm] = fim.split('-').map(Number)
     const inicioDate = new Date(fy - 1, fm - 1, 1) // 12 meses atrás, dia 1
     const trendInicio = localDateToISO(inicioDate)
@@ -823,7 +919,7 @@ export function calcTrendRange(
       meses: buildMesesRange(ai, mi, fy, fm),
     }
   }
-  // acumulado-ano e custom: usar o range original (não expandir)
+  // acumulado-ano, todo-periodo, custom: usar o range original (não expandir)
   return null
 }
 
@@ -843,16 +939,19 @@ export function getPreviousPeriodRange(
   const [fy, fm, fd] = fim.split('-').map(Number)
 
   switch (periodo) {
-    case 'mes-corrente': {
-      // Mês anterior
-      const prevDate = new Date(iy, im - 2, 1) // mês anterior, dia 1
+    case 'mes-corrente':
+    case 'mes-passado': {
+      // Mês anterior ao período (1 mês antes)
+      const prevDate = new Date(iy, im - 2, 1)
       const prevLast = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0)
       return {
         inicio: localDateToISO(prevDate),
         fim: localDateToISO(prevLast),
       }
     }
-    case 'semana-atual': {
+    case 'semana-atual':
+    case 'esta-semana-ate-hoje':
+    case 'semana-passada': {
       // Semana anterior (7 dias antes)
       const prevInicio = new Date(iy, im - 1, id - 7)
       const prevFim = new Date(fy, fm - 1, fd - 7)
@@ -868,6 +967,16 @@ export function getPreviousPeriodRange(
         fim: `${fy - 1}-${pad(fm)}-${pad(fd)}`,
       }
     }
+    case 'todo-periodo': {
+      // Sem comparação para "todo o período"
+      return null
+    }
+    case 'hoje':
+    case 'ontem':
+    case '7d':
+    case '14d':
+    case '30d':
+    case '90d':
     case 'custom': {
       // Mesma duração, deslocada para trás
       const duracao = diffDays(inicio, fim)

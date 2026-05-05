@@ -83,8 +83,9 @@ export async function GET(request: NextRequest) {
     }
 
     // 6. Buscar dados expandidos para o gráfico de evolução
-    //    semana-atual → últimas 10 semanas | mes-corrente → últimos 12 meses
-    const trendTipo = (periodo === 'semana-atual') ? 'semanal' as const : 'mensal' as const
+    //    Presets curtos → últimas 10 semanas (semanal) | demais → últimos 12 meses (mensal)
+    const SEMANAL_PRESETS = ['semana-atual', 'esta-semana-ate-hoje', 'semana-passada', 'hoje', 'ontem', '7d', '14d', '30d']
+    const trendTipo = SEMANAL_PRESETS.includes(periodo) ? 'semanal' as const : 'mensal' as const
     const trendRange = calcTrendRange(periodo, range.inicio, range.fim)
     const trendVendas = trendRange
       ? await fetchAllVendas(supabase, trendRange.inicio, trendRange.fim, vendedorParam)
@@ -326,9 +327,19 @@ async function fetchVendorGoals(
 
 function getDeltaLabel(periodo: string): string | null {
   switch (periodo) {
-    case 'semana-atual': return 'vs semana anterior'
-    case 'mes-corrente': return 'vs mês anterior'
+    case 'hoje': return 'vs ontem'
+    case 'ontem': return 'vs anteontem'
+    case 'semana-atual':
+    case 'esta-semana-ate-hoje': return 'vs semana anterior'
+    case 'semana-passada': return 'vs semana retrasada'
+    case '7d': return 'vs 7 dias anteriores'
+    case '14d': return 'vs 14 dias anteriores'
+    case '30d': return 'vs 30 dias anteriores'
+    case '90d': return 'vs 90 dias anteriores'
+    case 'mes-corrente':
+    case 'mes-passado': return 'vs mês anterior'
     case 'acumulado-ano': return 'vs mesmo período ano anterior'
+    case 'todo-periodo': return null
     case 'custom': return 'vs período anterior'
     default: return null
   }
