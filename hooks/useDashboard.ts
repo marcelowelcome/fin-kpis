@@ -15,6 +15,12 @@ interface UseDashboardReturn {
   setCustomInicio: (d: string) => void
   customFim: string
   setCustomFim: (d: string) => void
+  compareEnabled: boolean
+  setCompareEnabled: (b: boolean) => void
+  compareInicio: string
+  setCompareInicio: (d: string) => void
+  compareFim: string
+  setCompareFim: (d: string) => void
   vendedorFilter: string | null
   setVendedorFilter: (v: string | null) => void
 }
@@ -26,18 +32,37 @@ interface PeriodState {
   periodo: string
   customInicio: string
   customFim: string
+  compareEnabled: boolean
+  compareInicio: string
+  compareFim: string
 }
 
 function readFromURL(searchParams: URLSearchParams): PeriodState | null {
   const p = searchParams.get('p')
   if (!p) return null
+  const base: PeriodState = {
+    periodo: p,
+    customInicio: '',
+    customFim: '',
+    compareEnabled: false,
+    compareInicio: '',
+    compareFim: '',
+  }
   if (p === 'custom') {
     const i = searchParams.get('i') ?? ''
     const f = searchParams.get('f') ?? ''
     if (!ISO_DATE_RE.test(i) || !ISO_DATE_RE.test(f)) return null
-    return { periodo: 'custom', customInicio: i, customFim: f }
+    base.customInicio = i
+    base.customFim = f
   }
-  return { periodo: p, customInicio: '', customFim: '' }
+  const ci = searchParams.get('ci') ?? ''
+  const cf = searchParams.get('cf') ?? ''
+  if (ISO_DATE_RE.test(ci) && ISO_DATE_RE.test(cf)) {
+    base.compareEnabled = true
+    base.compareInicio = ci
+    base.compareFim = cf
+  }
+  return base
 }
 
 function readFromLocalStorage(): PeriodState | null {
@@ -51,6 +76,9 @@ function readFromLocalStorage(): PeriodState | null {
       periodo: parsed.periodo,
       customInicio: typeof parsed.customInicio === 'string' ? parsed.customInicio : '',
       customFim: typeof parsed.customFim === 'string' ? parsed.customFim : '',
+      compareEnabled: !!parsed.compareEnabled,
+      compareInicio: typeof parsed.compareInicio === 'string' ? parsed.compareInicio : '',
+      compareFim: typeof parsed.compareFim === 'string' ? parsed.compareFim : '',
     }
   } catch {
     return null
@@ -73,6 +101,10 @@ function buildQueryString(state: PeriodState): string {
     if (state.customInicio) params.set('i', state.customInicio)
     if (state.customFim) params.set('f', state.customFim)
   }
+  if (state.compareEnabled && state.compareInicio && state.compareFim) {
+    params.set('ci', state.compareInicio)
+    params.set('cf', state.compareFim)
+  }
   return params.toString()
 }
 
@@ -88,6 +120,9 @@ export function useDashboard(): UseDashboardReturn {
   const [periodo, setPeriodo] = useState('mes-corrente')
   const [customInicio, setCustomInicio] = useState('')
   const [customFim, setCustomFim] = useState('')
+  const [compareEnabled, setCompareEnabled] = useState(false)
+  const [compareInicio, setCompareInicio] = useState('')
+  const [compareFim, setCompareFim] = useState('')
   const [vendedorFilter, setVendedorFilter] = useState<string | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const hydratedRef = useRef(false)
@@ -103,18 +138,24 @@ export function useDashboard(): UseDashboardReturn {
       setPeriodo(initial.periodo)
       setCustomInicio(initial.customInicio)
       setCustomFim(initial.customFim)
+      setCompareEnabled(initial.compareEnabled)
+      setCompareInicio(initial.compareInicio)
+      setCompareFim(initial.compareFim)
     }
     setHydrated(true)
   }, [searchParams])
 
-  // Persistência: ao mudar período, escreve em URL (replace) + localStorage.
+  // Persistência: ao mudar período/comparação, escreve em URL (replace) + localStorage.
   useEffect(() => {
     if (!hydrated) return
-    const state = { periodo, customInicio, customFim }
+    const state: PeriodState = {
+      periodo, customInicio, customFim,
+      compareEnabled, compareInicio, compareFim,
+    }
     writeToLocalStorage(state)
     const qs = buildQueryString(state)
     router.replace(`?${qs}`, { scroll: false })
-  }, [hydrated, periodo, customInicio, customFim, router])
+  }, [hydrated, periodo, customInicio, customFim, compareEnabled, compareInicio, compareFim, router])
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true)
@@ -125,6 +166,10 @@ export function useDashboard(): UseDashboardReturn {
       if (periodo === 'custom' && customInicio && customFim) {
         params.set('inicio', customInicio)
         params.set('fim', customFim)
+      }
+      if (compareEnabled && compareInicio && compareFim) {
+        params.set('compInicio', compareInicio)
+        params.set('compFim', compareFim)
       }
       if (vendedorFilter) {
         params.set('vendedor', vendedorFilter)
@@ -144,7 +189,7 @@ export function useDashboard(): UseDashboardReturn {
     } finally {
       setLoading(false)
     }
-  }, [periodo, customInicio, customFim, vendedorFilter])
+  }, [periodo, customInicio, customFim, compareEnabled, compareInicio, compareFim, vendedorFilter])
 
   // Só busca depois de hidratado, para evitar fetch com defaults antes da URL/localStorage ser lida.
   useEffect(() => {
@@ -163,6 +208,12 @@ export function useDashboard(): UseDashboardReturn {
     setCustomInicio,
     customFim,
     setCustomFim,
+    compareEnabled,
+    setCompareEnabled,
+    compareInicio,
+    setCompareInicio,
+    compareFim,
+    setCompareFim,
     vendedorFilter,
     setVendedorFilter,
   }

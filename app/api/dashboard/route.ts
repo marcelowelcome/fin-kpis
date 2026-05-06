@@ -18,6 +18,9 @@ export async function GET(request: NextRequest) {
     const inicioParam = searchParams.get('inicio') ?? undefined
     const fimParam = searchParams.get('fim') ?? undefined
     const vendedorParam = searchParams.get('vendedor') ?? undefined
+    // Compare range (override do prevRange automático)
+    const compInicioParam = searchParams.get('compInicio') ?? undefined
+    const compFimParam = searchParams.get('compFim') ?? undefined
 
     // Validar formato de datas custom
     const isoDateRe = /^\d{4}-\d{2}-\d{2}$/
@@ -29,6 +32,15 @@ export async function GET(request: NextRequest) {
     }
     if (inicioParam && fimParam && inicioParam > fimParam) {
       return jsonError('INVALID_RANGE', 'Data inicio deve ser anterior a fim.', 400)
+    }
+    if (compInicioParam && !isoDateRe.test(compInicioParam)) {
+      return jsonError('INVALID_DATE', 'Formato de compInicio inválido. Use YYYY-MM-DD.', 400)
+    }
+    if (compFimParam && !isoDateRe.test(compFimParam)) {
+      return jsonError('INVALID_DATE', 'Formato de compFim inválido. Use YYYY-MM-DD.', 400)
+    }
+    if (compInicioParam && compFimParam && compInicioParam > compFimParam) {
+      return jsonError('INVALID_RANGE', 'compInicio deve ser anterior a compFim.', 400)
     }
 
     // 1. Calcular range — retorna strings ISO, nunca Date
@@ -75,8 +87,13 @@ export async function GET(request: NextRequest) {
     // 4. Agregar metas se multi-mês
     const metasAgg = range.meses.length > 1 ? aggregateMetas(metasEfetivas) : metasEfetivas
 
-    // 5. Buscar período anterior para delta (comparação)
-    const prevRange = getPreviousPeriodRange(periodo, range.inicio, range.fim)
+    // 5. Buscar período de comparação para delta
+    //    Se compInicio/compFim foram passados, usa range explícito (toggle "Comparar" ON).
+    //    Caso contrário, cai no auto-cálculo por preset.
+    const compareExplicit = !!(compInicioParam && compFimParam)
+    const prevRange = compareExplicit
+      ? { inicio: compInicioParam!, fim: compFimParam! }
+      : getPreviousPeriodRange(periodo, range.inicio, range.fim)
     let vendasAnterior: VendaKPI[] = []
     if (prevRange) {
       vendasAnterior = await fetchAllVendas(supabase, prevRange.inicio, prevRange.fim, vendedorParam)
@@ -125,7 +142,9 @@ export async function GET(request: NextRequest) {
         trendVendas: trendVendas as VendaKPI[],
         trendMetasRaw: trendMetas,
         trendTipo,
-        deltaLabel: getDeltaLabel(periodo),
+        deltaLabel: compareExplicit
+          ? `vs ${formatBR(compInicioParam!)} – ${formatBR(compFimParam!)}`
+          : getDeltaLabel(periodo),
         wtMetaDireta: vendorMetaOverride,
       }
     )
@@ -323,6 +342,11 @@ async function fetchVendorGoals(
   }
 
   return all
+}
+
+function formatBR(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
 }
 
 function getDeltaLabel(periodo: string): string | null {
