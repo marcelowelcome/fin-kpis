@@ -13,6 +13,13 @@ interface PeriodSelectorProps {
   setCustomInicio: (d: string) => void
   customFim: string
   setCustomFim: (d: string) => void
+  // Compare props são opcionais — quando ausentes, o toggle "Comparar" fica oculto.
+  compareEnabled?: boolean
+  setCompareEnabled?: (b: boolean) => void
+  compareInicio?: string
+  setCompareInicio?: (d: string) => void
+  compareFim?: string
+  setCompareFim?: (d: string) => void
 }
 
 const PRESETS: { key: string; label: string }[] = [
@@ -34,6 +41,8 @@ const ALL_PRESET_KEYS = [
   '7d', '14d', '30d', '90d',
   'mes-corrente', 'mes-passado', 'acumulado-ano', 'todo-periodo',
 ]
+
+type CompareMode = 'previous-period' | 'previous-year' | 'custom'
 
 // =============================================================
 // Helpers — datas ISO end-to-end (ver feedback_dates_as_strings)
@@ -60,6 +69,10 @@ function todayLocal(): Date {
 
 function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n)
+}
+
+function diffDays(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / 86400000)
 }
 
 /** Calcula o range visual de um preset no client (timezone local). */
@@ -121,6 +134,28 @@ function detectPreset(inicio: string, fim: string): string | null {
   return null
 }
 
+/** Range B para um modo de comparação dado o range A. */
+function calcCompareRange(mode: CompareMode, mainFrom: Date, mainTo: Date): { from: Date; to: Date } {
+  switch (mode) {
+    case 'previous-period': {
+      // Mesma duração, deslocada para trás imediatamente antes do range A
+      const dur = diffDays(mainFrom, mainTo)
+      const to = addDays(mainFrom, -1)
+      const from = addDays(to, -dur)
+      return { from, to }
+    }
+    case 'previous-year': {
+      // Mesmo range deslocado 1 ano pra trás
+      const from = new Date(mainFrom.getFullYear() - 1, mainFrom.getMonth(), mainFrom.getDate())
+      const to = new Date(mainTo.getFullYear() - 1, mainTo.getMonth(), mainTo.getDate())
+      return { from, to }
+    }
+    case 'custom':
+      // Sem cálculo — usuário define
+      return { from: mainFrom, to: mainTo }
+  }
+}
+
 function formatBR(iso: string): string {
   const [y, m, d] = iso.split('-')
   return `${d}/${m}/${y}`
@@ -137,6 +172,25 @@ function periodoToLabel(periodo: string, customInicio: string, customFim: string
   const r = presetToRange(periodo)
   if (r) return `${formatBR(dateToISO(r.from))} – ${formatBR(dateToISO(r.to))}`
   return 'Selecionar período'
+}
+
+function compareLabel(mode: CompareMode | null, ci: string, cf: string): string | null {
+  if (!ci || !cf) return null
+  switch (mode) {
+    case 'previous-period': return 'vs período anterior'
+    case 'previous-year': return 'vs ano anterior'
+    case 'custom':
+    default: return `vs ${formatBR(ci)} – ${formatBR(cf)}`
+  }
+}
+
+function detectCompareMode(mainFrom: Date, mainTo: Date, ci: string, cf: string): CompareMode | null {
+  if (!ci || !cf) return null
+  const prev = calcCompareRange('previous-period', mainFrom, mainTo)
+  if (dateToISO(prev.from) === ci && dateToISO(prev.to) === cf) return 'previous-period'
+  const yr = calcCompareRange('previous-year', mainFrom, mainTo)
+  if (dateToISO(yr.from) === ci && dateToISO(yr.to) === cf) return 'previous-year'
+  return 'custom'
 }
 
 function periodoToInitialRange(periodo: string, customInicio: string, customFim: string): DateRange | undefined {
@@ -158,7 +212,14 @@ export function PeriodSelector({
   setCustomInicio,
   customFim,
   setCustomFim,
+  compareEnabled = false,
+  setCompareEnabled,
+  compareInicio = '',
+  setCompareInicio,
+  compareFim = '',
+  setCompareFim,
 }: PeriodSelectorProps) {
+  const compareSupported = !!(setCompareEnabled && setCompareInicio && setCompareFim)
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -169,6 +230,12 @@ export function PeriodSelector({
   // Inputs de texto editáveis (espelham o draft mas permitem digitação parcial)
   const [inicioText, setInicioText] = useState('')
   const [fimText, setFimText] = useState('')
+  // Compare draft
+  const [draftCompareEnabled, setDraftCompareEnabled] = useState(false)
+  const [draftCompareMode, setDraftCompareMode] = useState<CompareMode>('previous-period')
+  const [draftCompareRange, setDraftCompareRange] = useState<DateRange | undefined>(undefined)
+  const [compareInicioText, setCompareInicioText] = useState('')
+  const [compareFimText, setCompareFimText] = useState('')
 
   // Sincronizar draft com props ao abrir
   useEffect(() => {
@@ -179,7 +246,39 @@ export function PeriodSelector({
     setFimText(r?.to ? formatBR(dateToISO(r.to)) : '')
     setDaysUntilToday('')
     setDaysUntilYesterday('')
-  }, [open, periodo, customInicio, customFim])
+
+    setDraftCompareEnabled(compareEnabled)
+    if (compareEnabled && compareInicio && compareFim && r?.from && r?.to) {
+      const mode = detectCompareMode(r.from, r.to, compareInicio, compareFim)
+      setDraftCompareMode(mode ?? 'custom')
+      setDraftCompareRange({ from: isoToDate(compareInicio), to: isoToDate(compareFim) })
+      setCompareInicioText(formatBR(compareInicio))
+      setCompareFimText(formatBR(compareFim))
+    } else {
+      setDraftCompareMode('previous-period')
+      if (r?.from && r?.to) {
+        const auto = calcCompareRange('previous-period', r.from, r.to)
+        setDraftCompareRange({ from: auto.from, to: auto.to })
+        setCompareInicioText(formatBR(dateToISO(auto.from)))
+        setCompareFimText(formatBR(dateToISO(auto.to)))
+      } else {
+        setDraftCompareRange(undefined)
+        setCompareInicioText('')
+        setCompareFimText('')
+      }
+    }
+  }, [open, periodo, customInicio, customFim, compareEnabled, compareInicio, compareFim])
+
+  // Quando o range A ou o modo de compare mudam, recalcular o range B (exceto em modo custom)
+  useEffect(() => {
+    if (!open) return
+    if (draftCompareMode === 'custom') return
+    if (!draftRange?.from || !draftRange?.to) return
+    const r = calcCompareRange(draftCompareMode, draftRange.from, draftRange.to)
+    setDraftCompareRange({ from: r.from, to: r.to })
+    setCompareInicioText(formatBR(dateToISO(r.from)))
+    setCompareFimText(formatBR(dateToISO(r.to)))
+  }, [open, draftCompareMode, draftRange])
 
   // Click fora fecha
   useEffect(() => {
@@ -204,6 +303,14 @@ export function PeriodSelector({
     () => periodoToLabel(periodo, customInicio, customFim),
     [periodo, customInicio, customFim]
   )
+
+  const buttonCompareLabel = useMemo(() => {
+    if (!compareEnabled) return null
+    const r = periodoToInitialRange(periodo, customInicio, customFim)
+    if (!r?.from || !r?.to) return null
+    const mode = detectCompareMode(r.from, r.to, compareInicio, compareFim)
+    return compareLabel(mode, compareInicio, compareFim)
+  }, [compareEnabled, periodo, customInicio, customFim, compareInicio, compareFim])
 
   // Preset ativo no draft (para destacar visualmente)
   const activePresetKey = useMemo(() => {
@@ -291,6 +398,25 @@ export function PeriodSelector({
     }
   }
 
+  function handleCompareInicioBlur() {
+    const date = parseTextDate(compareInicioText)
+    if (date) {
+      setDraftCompareRange((prev) => ({ from: date, to: prev?.to }))
+      setCompareInicioText(formatBR(dateToISO(date)))
+    } else if (draftCompareRange?.from) {
+      setCompareInicioText(formatBR(dateToISO(draftCompareRange.from)))
+    }
+  }
+  function handleCompareFimBlur() {
+    const date = parseTextDate(compareFimText)
+    if (date) {
+      setDraftCompareRange((prev) => ({ from: prev?.from, to: date }))
+      setCompareFimText(formatBR(dateToISO(date)))
+    } else if (draftCompareRange?.to) {
+      setCompareFimText(formatBR(dateToISO(draftCompareRange.to)))
+    }
+  }
+
   function handleApply() {
     if (!draftRange?.from || !draftRange?.to) return
     let from = draftRange.from
@@ -310,6 +436,23 @@ export function PeriodSelector({
       setCustomFim(fim)
       setPeriodo('custom')
     }
+
+    // Compare (só propaga se a página suporta — nas que não passam os setters, ignoramos)
+    if (compareSupported) {
+      if (draftCompareEnabled && draftCompareRange?.from && draftCompareRange?.to) {
+        let cFrom = draftCompareRange.from
+        let cTo = draftCompareRange.to
+        if (cFrom > cTo) { const t = cFrom; cFrom = cTo; cTo = t }
+        setCompareEnabled!(true)
+        setCompareInicio!(dateToISO(cFrom))
+        setCompareFim!(dateToISO(cTo))
+      } else {
+        setCompareEnabled!(false)
+        setCompareInicio!('')
+        setCompareFim!('')
+      }
+    }
+
     setOpen(false)
   }
 
@@ -324,7 +467,12 @@ export function PeriodSelector({
         aria-expanded={open}
       >
         <CalendarDays size={14} className="text-slate-500" />
-        <span className="max-w-[260px] truncate">{buttonLabel}</span>
+        <span className="flex flex-col items-start max-w-[260px] leading-tight">
+          <span className="truncate">{buttonLabel}</span>
+          {buttonCompareLabel && (
+            <span className="text-[10px] text-slate-500 truncate">{buttonCompareLabel}</span>
+          )}
+        </span>
         <ChevronDown size={14} className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -422,6 +570,77 @@ export function PeriodSelector({
               </div>
             </div>
           </div>
+
+          {/* Compare section (oculta quando a página não passa os setters) */}
+          {compareSupported && (
+          <div className="border-t border-slate-100 px-3 py-3 bg-slate-50/40">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={draftCompareEnabled}
+                onChange={(e) => setDraftCompareEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-300"
+              />
+              <span className="text-sm font-medium text-slate-700">Comparar com outro período</span>
+            </label>
+
+            {draftCompareEnabled && (
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    { key: 'previous-period', label: 'Período anterior' },
+                    { key: 'previous-year', label: 'Mesmo período ano anterior' },
+                    { key: 'custom', label: 'Personalizado' },
+                  ] as const).map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setDraftCompareMode(key)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                        draftCompareMode === key
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <label className="block text-[10px] uppercase tracking-wide text-slate-400 mb-1">Comparar de</label>
+                    <input
+                      type="text"
+                      value={compareInicioText}
+                      onChange={(e) => {
+                        setCompareInicioText(e.target.value)
+                        if (draftCompareMode !== 'custom') setDraftCompareMode('custom')
+                      }}
+                      onBlur={handleCompareInicioBlur}
+                      placeholder="DD/MM/AAAA"
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300 tabular-nums"
+                    />
+                  </div>
+                  <span className="text-slate-400 mt-4">–</span>
+                  <div className="flex-1">
+                    <label className="block text-[10px] uppercase tracking-wide text-slate-400 mb-1">Até</label>
+                    <input
+                      type="text"
+                      value={compareFimText}
+                      onChange={(e) => {
+                        setCompareFimText(e.target.value)
+                        if (draftCompareMode !== 'custom') setDraftCompareMode('custom')
+                      }}
+                      onBlur={handleCompareFimBlur}
+                      placeholder="DD/MM/AAAA"
+                      className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-300 tabular-nums"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          )}
 
           {/* Footer */}
           <div className="flex items-center justify-end gap-2 px-3 py-2.5 border-t border-slate-100 bg-slate-50/60">

@@ -40,6 +40,12 @@ export function DashboardClient() {
     setCustomInicio,
     customFim,
     setCustomFim,
+    compareEnabled,
+    setCompareEnabled,
+    compareInicio,
+    setCompareInicio,
+    compareFim,
+    setCompareFim,
     vendedorFilter,
     setVendedorFilter,
   } = useDashboard()
@@ -70,6 +76,12 @@ export function DashboardClient() {
               setCustomInicio={setCustomInicio}
               customFim={customFim}
               setCustomFim={setCustomFim}
+              compareEnabled={compareEnabled}
+              setCompareEnabled={setCompareEnabled}
+              compareInicio={compareInicio}
+              setCompareInicio={setCompareInicio}
+              compareFim={compareFim}
+              setCompareFim={setCompareFim}
             />
             <ExportButton targetId="dashboard-content" filename={`dashboard-${periodo}`} />
           </div>
