@@ -844,6 +844,24 @@ export function getPeriodRange(
         meses: buildMesesRange(ano, 1, ano, now.getMonth() + 1),
       }
     }
+    case 'ultimo-trimestre': {
+      // Últimos 3 meses completos: do 1º dia de 3 meses atrás ao último dia do mês anterior
+      const endRef = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const startRef = new Date(now.getFullYear(), now.getMonth() - 3, 1)
+      const ano = startRef.getFullYear()
+      const mesInicio = startRef.getMonth() + 1
+      const anoFim = endRef.getFullYear()
+      const mesFim = endRef.getMonth() + 1
+      const inicio = `${ano}-${pad(mesInicio)}-01`
+      const lastDay = new Date(anoFim, mesFim, 0).getDate()
+      const fim = `${anoFim}-${pad(mesFim)}-${pad(lastDay)}`
+      return {
+        inicio,
+        fim,
+        label: 'Último trimestre',
+        meses: buildMesesRange(ano, mesInicio, anoFim, mesFim),
+      }
+    }
     case 'todo-periodo': {
       // Sem registro mais antigo do banco — usar marco fixo. Janeiro/2024 cobre operação histórica.
       const inicio = '2024-01-01'
@@ -947,6 +965,15 @@ export function getPreviousPeriodRange(
       return {
         inicio: localDateToISO(prevDate),
         fim: localDateToISO(prevLast),
+      }
+    }
+    case 'ultimo-trimestre': {
+      // Trimestre anterior (3 meses antes)
+      const prevStart = new Date(iy, im - 4, 1)
+      const prevEnd = new Date(iy, im - 1, 0)
+      return {
+        inicio: localDateToISO(prevStart),
+        fim: localDateToISO(prevEnd),
       }
     }
     case 'semana-atual':

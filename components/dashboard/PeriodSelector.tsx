@@ -29,9 +29,10 @@ const PRESETS: { key: string; label: string }[] = [
   { key: '7d', label: '7 dias atrás' },
   { key: 'semana-passada', label: 'Semana passada (dom. a sáb.)' },
   { key: '14d', label: '14 dias atrás' },
-  { key: 'mes-corrente', label: 'Este mês' },
+  { key: 'mes-corrente', label: 'Mês atual' },
   { key: '30d', label: '30 dias atrás' },
   { key: 'mes-passado', label: 'Último mês' },
+  { key: 'ultimo-trimestre', label: 'Último trimestre' },
   { key: 'acumulado-ano', label: 'Acumulado do ano' },
   { key: 'todo-periodo', label: 'Todo o período' },
 ]
@@ -39,7 +40,7 @@ const PRESETS: { key: string; label: string }[] = [
 const ALL_PRESET_KEYS = [
   'hoje', 'ontem', 'esta-semana-ate-hoje', 'semana-atual', 'semana-passada',
   '7d', '14d', '30d', '90d',
-  'mes-corrente', 'mes-passado', 'acumulado-ano', 'todo-periodo',
+  'mes-corrente', 'mes-passado', 'ultimo-trimestre', 'acumulado-ano', 'todo-periodo',
 ]
 
 type CompareMode = 'previous-period' | 'previous-year' | 'custom'
@@ -113,6 +114,10 @@ function presetToRange(preset: string): { from: Date; to: Date } | null {
     case 'mes-passado': {
       const y = today.getFullYear(), m = today.getMonth()
       return { from: new Date(y, m - 1, 1), to: new Date(y, m, 0) }
+    }
+    case 'ultimo-trimestre': {
+      const y = today.getFullYear(), m = today.getMonth()
+      return { from: new Date(y, m - 3, 1), to: new Date(y, m, 0) }
     }
     case 'acumulado-ano': {
       const y = today.getFullYear()

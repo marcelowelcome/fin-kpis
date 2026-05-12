@@ -14,6 +14,13 @@ import { ExportButton } from '@/components/dashboard/ExportButton'
 import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
 
+const QUICK_PERIODS = [
+  { key: 'acumulado-ano', label: `Acumulado ${new Date().getFullYear()}` },
+  { key: 'mes-passado', label: 'Último mês' },
+  { key: 'mes-corrente', label: 'Mês atual' },
+  { key: 'ultimo-trimestre', label: 'Último trimestre' },
+]
+
 const EMPTY_PIPELINE = {
   aberta: { count: 0, valor: 0 },
   fechada: { count: 0, valor: 0 },
@@ -85,6 +92,23 @@ export function DashboardClient() {
             />
             <ExportButton targetId="dashboard-content" filename={`dashboard-${periodo}`} />
           </div>
+        </div>
+
+        {/* Quick period shortcuts */}
+        <div className="flex flex-wrap gap-2">
+          {QUICK_PERIODS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => { setPeriodo(key); setCustomInicio(''); setCustomFim('') }}
+              className={`px-3 py-1.5 text-sm font-medium rounded-full transition-colors ${
+                periodo === key
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Company Tabs */}
