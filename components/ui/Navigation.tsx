@@ -67,7 +67,7 @@ export function Navigation() {
             <>
               <div className="flex items-center gap-2">
                 <BarChart3 size={18} strokeWidth={1.75} className="text-blue-400" />
-                <h1 className="text-lg font-bold tracking-tight">DashWT</h1>
+                <h1 className="text-lg font-bold tracking-tight">Dash Comercial</h1>
               </div>
               <p className="text-xs text-slate-400 mt-1">Welcome Group</p>
             </>
@@ -122,7 +122,7 @@ export function Navigation() {
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <BarChart3 size={18} strokeWidth={1.75} className="text-blue-400" />
-          <h1 className="text-lg font-bold">DashWT</h1>
+          <h1 className="text-lg font-bold">Dash Comercial</h1>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
