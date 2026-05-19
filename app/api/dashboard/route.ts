@@ -146,6 +146,7 @@ export async function GET(request: NextRequest) {
           ? `vs ${formatBR(compInicioParam!)} – ${formatBR(compFimParam!)}`
           : getDeltaLabel(periodo),
         wtMetaDireta: vendorMetaOverride,
+        useReceitaMeta: vendorMetaOverride,
       }
     )
 
@@ -169,8 +170,7 @@ export async function GET(request: NextRequest) {
         if (!vg || vg.meta <= 0) {
           return { ...v, fatMeta: null, percRealizado: null, tipoMeta: null }
         }
-        // Comparar contra a métrica correta: valor_total (faturamento) ou receita
-        const realizado = vg.tipo === 'receita' ? v.receitas : v.faturamento
+        const realizado = v.receitas
         return {
           ...v,
           fatMeta: vg.meta,

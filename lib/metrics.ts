@@ -35,7 +35,8 @@ export function calcSetorKPI(
   vendas: VendaKPI[],
   meta: number,
   setorGrupos: SetorGrupo | SetorGrupo[],
-  receitaMetaPct: number = 0
+  receitaMetaPct: number = 0,
+  useReceita: boolean = false
 ): SetorKPI {
   const grupos = Array.isArray(setorGrupos) ? setorGrupos : [setorGrupos]
   const filtered = vendas.filter((v) => grupos.includes(v.setor_grupo))
@@ -43,11 +44,12 @@ export function calcSetorKPI(
   const fatRealizado = sum(filtered, 'faturamento')
   const receita = sum(filtered, 'receitas')
   const nVendas = countUniqueVendas(filtered)
+  const realizadoParaMeta = useReceita ? receita : fatRealizado
 
   return {
     fatMeta: meta,
     fatRealizado,
-    percRealizado: meta > 0 ? fatRealizado / meta : null,
+    percRealizado: meta > 0 ? realizadoParaMeta / meta : null,
     receita,
     percReceita: fatRealizado > 0 ? receita / fatRealizado : null,
     receitaMetaPct,
@@ -78,6 +80,8 @@ export function calcDashboard(
     deltaLabel?: string | null
     /** Quando true, WT meta vem direto de getMeta('WT'), não soma setores */
     wtMetaDireta?: boolean
+    /** Quando true, percRealizado usa receitas (não faturamento) como numerador */
+    useReceitaMeta?: boolean
   }
 ): DashboardData {
   // Proporcionalizar metas quando o período é menor que um mês
@@ -103,14 +107,16 @@ export function calcDashboard(
     return meta ? (meta.receita_meta_pct || 0) : 0
   }
 
-  const corp = calcSetorKPI(vendas, getMeta('CORP'), 'CORP', getReceitaPct('CORP'))
+  const useReceita = opts?.useReceitaMeta ?? false
+
+  const corp = calcSetorKPI(vendas, getMeta('CORP'), 'CORP', getReceitaPct('CORP'), useReceita)
   const trips: TripsKPI = {
-    ...calcSetorKPI(vendas, getMeta('TRIPS'), 'TRIPS', getReceitaPct('TRIPS')),
+    ...calcSetorKPI(vendas, getMeta('TRIPS'), 'TRIPS', getReceitaPct('TRIPS'), useReceita),
     nTaxas: countTaxas(vendas),
   }
   const contratosDetalhes = filterContratos(vendas)
   const weddings: WeddingsKPI = {
-    ...calcSetorKPI(vendas, getMeta('WEDDINGS'), 'WEDDINGS', getReceitaPct('WEDDINGS')),
+    ...calcSetorKPI(vendas, getMeta('WEDDINGS'), 'WEDDINGS', getReceitaPct('WEDDINGS'), useReceita),
     nContratos: contratosDetalhes.length,
     contratosDetalhes,
     subcategorias: calcWeddingsSubcategorias(vendas, metas),
@@ -127,7 +133,8 @@ export function calcDashboard(
     vendas,
     wtMeta,
     SETORES_WT,
-    wtReceitaPct
+    wtReceitaPct,
+    useReceita
   )
 
   const ultimaAtualizacao = vendas.length > 0

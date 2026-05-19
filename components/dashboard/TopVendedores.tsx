@@ -114,12 +114,8 @@ export function TopVendedores({ vendedores, loading = false, activeVendedor, onS
                     }`}>
                       {v.percRealizado != null ? formatPercent(v.percRealizado) : '—'}
                     </span>
-                    <span className={`text-[9px] px-1 py-0.5 rounded font-medium shrink-0 ${
-                      v.tipoMeta === 'receita'
-                        ? 'bg-emerald-50 text-emerald-600'
-                        : 'bg-blue-50 text-blue-600'
-                    }`}>
-                      {v.tipoMeta === 'receita' ? 'Rec' : 'VT'}
+                    <span className="text-[9px] px-1 py-0.5 rounded font-medium shrink-0 bg-emerald-50 text-emerald-600">
+                      Rec
                     </span>
                   </div>
                 )}
