@@ -9,6 +9,7 @@ import { PipelineCard } from '@/components/dashboard/PipelineCard'
 import { TopVendedores } from '@/components/dashboard/TopVendedores'
 import { ForecastCard } from '@/components/dashboard/ForecastCard'
 import { MonthlyChart } from '@/components/dashboard/MonthlyChart'
+import { GroupEvolutionChart } from '@/components/dashboard/GroupEvolutionChart'
 import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
 import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
@@ -165,24 +166,6 @@ export function DashboardClient() {
               accent="#1e293b"
             />
 
-            {/* Gráfico evolução mensal + Forecast */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2">
-                <MonthlyChart
-                  data={data?.trend?.total ?? []}
-                  dailyData={data?.dailyTrend?.total}
-                  color="#1e293b"
-                  loading={loading}
-                />
-              </div>
-              <ForecastCard
-                data={data?.forecast?.total ?? EMPTY_FORECAST}
-                meta={data?.consolidado.fatMeta ?? 0}
-                realizado={data?.consolidado.fatRealizado ?? 0}
-                loading={loading}
-              />
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <KPICard
                 label="Corporativo"
@@ -231,6 +214,29 @@ export function DashboardClient() {
                 expectedPercent={expectedPct}
                 loading={loading}
                 accent="#D4AC0D"
+              />
+            </div>
+
+            {/* Gráfico evolução multi-setor + Forecast */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2">
+                <GroupEvolutionChart
+                  trendTotal={data?.trend?.total ?? []}
+                  trendCorp={data?.trend?.corp ?? []}
+                  trendTrips={data?.trend?.trips ?? []}
+                  trendWeddings={data?.trend?.weddings ?? []}
+                  dailyTotal={data?.dailyTrend?.total}
+                  dailyCorp={data?.dailyTrend?.corp}
+                  dailyTrips={data?.dailyTrend?.trips}
+                  dailyWeddings={data?.dailyTrend?.weddings}
+                  loading={loading}
+                />
+              </div>
+              <ForecastCard
+                data={data?.forecast?.total ?? EMPTY_FORECAST}
+                meta={data?.consolidado.fatMeta ?? 0}
+                realizado={data?.consolidado.fatRealizado ?? 0}
+                loading={loading}
               />
             </div>
 
