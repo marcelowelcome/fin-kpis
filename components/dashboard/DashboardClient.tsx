@@ -14,6 +14,28 @@ import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
 import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
+import type { VendaKPI } from '@/lib/schemas'
+
+function ContratosHighlight({ count, contratos }: { count: number; contratos: VendaKPI[] }) {
+  return (
+    <div className="mt-3 pt-3 border-t border-amber-100">
+      <div className="flex items-center justify-between bg-amber-50 rounded-xl px-3 py-2.5">
+        <div>
+          <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider mb-0.5">Contratos vendidos</p>
+          <p className="text-2xl font-bold text-amber-900 tabular-nums">{count}</p>
+        </div>
+        {count > 0 && (
+          <div className="text-xs text-amber-600">
+            <ContratosPopover count={count} contratos={contratos} />
+          </div>
+        )}
+        {count === 0 && (
+          <span className="text-xs text-amber-400 italic">nenhum no período</span>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const QUICK_PERIODS = [
   { key: 'acumulado-ano', label: `Acumulado ${new Date().getFullYear()}` },
@@ -214,7 +236,12 @@ export function DashboardClient() {
                 expectedPercent={expectedPct}
                 loading={loading}
                 accent="#D4AC0D"
-              />
+              >
+                <ContratosHighlight
+                  count={data?.weddings.nContratos ?? 0}
+                  contratos={data?.weddings.contratosDetalhes ?? []}
+                />
+              </KPICard>
             </div>
 
             {/* Gráfico evolução multi-setor + Forecast */}
@@ -327,16 +354,10 @@ export function DashboardClient() {
               loading={loading}
               accent="#D4AC0D"
             >
-              {data?.weddings.nContratos !== undefined && data.weddings.nContratos > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs text-slate-500">
-                    <ContratosPopover
-                      count={data.weddings.nContratos}
-                      contratos={data.weddings.contratosDetalhes ?? []}
-                    />
-                  </p>
-                </div>
-              )}
+              <ContratosHighlight
+                count={data?.weddings.nContratos ?? 0}
+                contratos={data?.weddings.contratosDetalhes ?? []}
+              />
             </KPICard>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
