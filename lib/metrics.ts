@@ -84,23 +84,38 @@ export function calcDashboard(
     useReceitaMeta?: boolean
   }
 ): DashboardData {
-  // Proporcionalizar metas quando o período é menor que um mês
-  // (ex: semana-atual = 7 dias de um mês de 31 → meta × 7/31)
+  // Proporcionalizar metas até a data de "hoje" dentro do período:
+  // - meses inteiramente passados: meta cheia
+  // - mês corrente: meta × (dias decorridos no mês até hoje / dias do mês)
+  // - meses futuros: 0
+  // - períodos inteiramente no passado: meta cheia (sem corte)
+  const todayStr = localDateToISO(new Date())
   const periodoInicio = periodo.inicio
   const periodoFim = periodo.fim
-  const periodoDias = diffDays(periodoInicio, periodoFim) + 1
 
-  // Verificar se o período cabe dentro de um único mês
-  const mesInicio = periodoInicio.substring(0, 7) // "YYYY-MM"
-  const mesFim = periodoFim.substring(0, 7)
-  const isSingleMonth = mesInicio === mesFim
-  const [pAno, pMes] = periodoInicio.split('-').map(Number)
-  const diasNoMes = isSingleMonth ? new Date(pAno, pMes, 0).getDate() : 0
-  const metaRatio = (isSingleMonth && periodoDias < diasNoMes) ? periodoDias / diasNoMes : 1
+  const metasRawArr = opts?.metasRaw ?? metas
+  const prorratedMetaBySetor = new Map<string, number>()
+  for (const m of metasRawArr) {
+    const diasNoMes = new Date(m.ano, m.mes, 0).getDate()
+    const mm = String(m.mes).padStart(2, '0')
+    const monthStart = `${m.ano}-${mm}-01`
+    const monthEnd = `${m.ano}-${mm}-${String(diasNoMes).padStart(2, '0')}`
+    // intersecção com o período solicitado
+    const inicioEf = monthStart > periodoInicio ? monthStart : periodoInicio
+    const fimEfPeriodo = monthEnd < periodoFim ? monthEnd : periodoFim
+    if (inicioEf > fimEfPeriodo) continue
+    // corta a janela em "hoje" para não contar dias futuros
+    const fimEf = fimEfPeriodo < todayStr ? fimEfPeriodo : todayStr
+    if (inicioEf > fimEf) continue
+    const diasContados = diffDays(inicioEf, fimEf) + 1
+    const factor = diasContados / diasNoMes
+    const key = m.setor_grupo as string
+    const prev = prorratedMetaBySetor.get(key) ?? 0
+    prorratedMetaBySetor.set(key, prev + m.fat_meta * factor)
+  }
 
   const getMeta = (setor: SetorMeta): number => {
-    const meta = metas.find((m) => m.setor_grupo === setor)
-    return meta ? meta.fat_meta * metaRatio : 0
+    return prorratedMetaBySetor.get(setor) ?? 0
   }
   const getReceitaPct = (setor: SetorMeta): number => {
     const meta = metas.find((m) => m.setor_grupo === setor)
@@ -119,7 +134,7 @@ export function calcDashboard(
     ...calcSetorKPI(vendas, getMeta('WEDDINGS'), 'WEDDINGS', getReceitaPct('WEDDINGS'), useReceita),
     nContratos: contratosDetalhes.length,
     contratosDetalhes,
-    subcategorias: calcWeddingsSubcategorias(vendas, metas),
+    subcategorias: calcWeddingsSubcategorias(vendas, prorratedMetaBySetor, metasRawArr),
   }
 
   const wtMeta = opts?.wtMetaDireta
@@ -626,7 +641,11 @@ const SUBCATEGORIA_META_MAP: Record<string, SetorMeta> = {
   'Planejamento-WED': 'WEDDINGS-PLANEJAMENTO',
 }
 
-function calcWeddingsSubcategorias(vendas: VendaKPI[], metas: Meta[]): Record<string, SetorKPI> {
+function calcWeddingsSubcategorias(
+  vendas: VendaKPI[],
+  prorratedMetas: Map<string, number>,
+  rawMetas: Meta[]
+): Record<string, SetorKPI> {
   const weddingsVendas = vendas.filter((v) => v.setor_grupo === 'WEDDINGS')
 
   const groups: Record<string, VendaKPI[]> = {}
@@ -636,14 +655,13 @@ function calcWeddingsSubcategorias(vendas: VendaKPI[], metas: Meta[]): Record<st
     groups[sub].push(v)
   }
 
-  // Buscar metas de subcategorias
   const getSubMeta = (sub: string): { fat: number; recPct: number } => {
     const metaSetor = SUBCATEGORIA_META_MAP[sub]
     if (!metaSetor) return { fat: 0, recPct: 0 }
-    const meta = metas.find((m) => m.setor_grupo === metaSetor)
+    const rawMeta = rawMetas.find((m) => m.setor_grupo === metaSetor)
     return {
-      fat: meta ? meta.fat_meta : 0,
-      recPct: meta ? (meta.receita_meta_pct || 0) : 0,
+      fat: prorratedMetas.get(metaSetor) ?? 0,
+      recPct: rawMeta ? (rawMeta.receita_meta_pct || 0) : 0,
     }
   }
 
