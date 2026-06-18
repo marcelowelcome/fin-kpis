@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Search, Copy, Trash2 } from 'lucide-react'
+import { Search, Copy, Trash2, Zap } from 'lucide-react'
 import type { VendorGoal, VendorGoalInput, TipoMeta } from '@/lib/schemas'
 import { TIPO_META_LABELS } from '@/lib/schemas'
 import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
+import { TP_LEVELS, TP_PLANS, TP_COLORS, type TpLevel } from '@/lib/tp-plan'
 
 interface VendorGoalsTableProps {
   goals: VendorGoal[]
@@ -15,12 +16,22 @@ interface VendorGoalsTableProps {
 }
 
 const MESES_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+const TP_STORAGE_KEY = 'vendor-tp-assignments'
 
 export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: VendorGoalsTableProps) {
   const [fatData, setFatData] = useState<Record<string, number>>({})
   const [tipoData, setTipoData] = useState<Record<string, TipoMeta>>({})
+  const [tpData, setTpData] = useState<Record<string, TpLevel>>({})
   const [hasChanges, setHasChanges] = useState(false)
   const [search, setSearch] = useState('')
+
+  // Carregar TP assignments do localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TP_STORAGE_KEY)
+      if (saved) setTpData(JSON.parse(saved))
+    } catch { /* ignore */ }
+  }, [])
 
   // Inicializar com dados do banco
   useEffect(() => {
@@ -29,7 +40,6 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
     goals.forEach((g) => {
       fat[`${g.vendedor}|${g.mes}`] = g.fat_meta
-      // tipo_meta é por vendedor (mesmo para todos os meses), pegar o primeiro
       if (!tipos[g.vendedor]) {
         tipos[g.vendedor] = g.tipo_meta ?? 'valor_total'
       }
@@ -53,6 +63,32 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
   const setTipo = (vendedor: string, tipo: TipoMeta) => {
     setTipoData((prev) => ({ ...prev, [vendedor]: tipo }))
+    setHasChanges(true)
+  }
+
+  const getTp = (vendedor: string): TpLevel | null =>
+    tpData[vendedor] ?? null
+
+  const setTp = (vendedor: string, tp: TpLevel | null) => {
+    setTpData((prev) => {
+      const next = { ...prev }
+      if (tp === null) delete next[vendedor]
+      else next[vendedor] = tp
+      try { localStorage.setItem(TP_STORAGE_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+
+  const applyTpPlan = (vendedor: string, meta: 1 | 2 | 3) => {
+    const tp = getTp(vendedor)
+    if (!tp) return
+    const values = TP_PLANS[tp][meta]
+    if (!values.length) return
+    setFatData((prev) => {
+      const next = { ...prev }
+      values.forEach((val, idx) => { next[`${vendedor}|${idx + 1}`] = val })
+      return next
+    })
     setHasChanges(true)
   }
 
@@ -132,6 +168,7 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
   }
 
   const vendedoresComMeta = allVendedores.filter((v) => getTotal(v) > 0).length
+  const vendedoresComTp = allVendedores.filter((v) => getTp(v) !== null).length
 
   return (
     <div className="space-y-4">
@@ -150,6 +187,9 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-500">
             {vendedoresComMeta} de {allVendedores.length} com meta
+            {vendedoresComTp > 0 && (
+              <span className="ml-2 text-amber-600">· {vendedoresComTp} com TP</span>
+            )}
           </span>
           <button
             onClick={handleSave}
@@ -161,13 +201,27 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
         </div>
       </div>
 
+      {/* Legenda TP */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-slate-400 flex items-center gap-1">
+          <Zap size={11} />
+          Nível TP:
+        </span>
+        {TP_LEVELS.filter(tp => tp !== 'TP5').map((tp) => (
+          <span key={tp} className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${TP_COLORS[tp]}`}>
+            {tp}
+          </span>
+        ))}
+        <span className="text-xs text-slate-400 ml-2">— clique no nível para atribuir; depois use M1/M2/M3 para preencher o plano</span>
+      </div>
+
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[280px]">
+                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[300px]">
                   Vendedor
                 </th>
                 {MESES_SHORT.map((m, i) => (
@@ -178,7 +232,7 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                 <th className="px-3 py-3 text-right font-medium text-slate-600 min-w-[110px] border-l border-slate-200">
                   Total Ano
                 </th>
-                <th className="px-2 py-3 text-center font-medium text-slate-400 min-w-[70px]" />
+                <th className="px-2 py-3 text-center font-medium text-slate-400 min-w-[90px]" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -186,12 +240,14 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                 const total = getTotal(vendedor)
                 const hasGoal = total > 0
                 const tipo = getTipo(vendedor)
+                const tp = getTp(vendedor)
+                const hasTpPlan = tp !== null && TP_PLANS[tp][1].length > 0
                 return (
                   <tr
                     key={vendedor}
                     className={`group transition-colors ${hasGoal ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30`}
                   >
-                    {/* Vendedor name + avatar + tipo toggle */}
+                    {/* Vendedor name + avatar + tipo toggle + TP selector */}
                     <td className="px-4 py-2 sticky left-0 z-10 bg-inherit">
                       <div className="flex items-center gap-2.5">
                         <div
@@ -201,12 +257,13 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                         >
                           {getInitials(vendedor)}
                         </div>
-                        <div className="min-w-0">
-                          <span className="text-sm font-medium text-slate-700 truncate block max-w-[140px]" title={vendedor}>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm font-medium text-slate-700 truncate block max-w-[150px]" title={vendedor}>
                             {vendedor}
                           </span>
-                          {/* Tipo meta toggle */}
-                          <div className="flex items-center gap-0.5 mt-0.5">
+                          {/* Controls row */}
+                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                            {/* Tipo meta */}
                             {(['valor_total', 'receita'] as TipoMeta[]).map((t) => (
                               <button
                                 key={t}
@@ -220,6 +277,23 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                                 }`}
                               >
                                 {TIPO_META_LABELS[t]}
+                              </button>
+                            ))}
+                            {/* Divider */}
+                            <span className="text-slate-200 select-none">|</span>
+                            {/* TP selector */}
+                            {TP_LEVELS.filter(lv => lv !== 'TP5').map((lv) => (
+                              <button
+                                key={lv}
+                                onClick={() => setTp(vendedor, tp === lv ? null : lv)}
+                                title={tp === lv ? `Remover ${lv}` : `Atribuir ${lv}`}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                                  tp === lv
+                                    ? TP_COLORS[lv]
+                                    : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                                }`}
+                              >
+                                {lv}
                               </button>
                             ))}
                           </div>
@@ -264,10 +338,25 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
                     {/* Actions */}
                     <td className="px-2 py-2">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Aplicar plano TP */}
+                        {hasTpPlan && (
+                          <div className="flex items-center gap-0.5 mr-1">
+                            {([1, 2, 3] as const).map((m) => (
+                              <button
+                                key={m}
+                                onClick={() => applyTpPlan(vendedor, m)}
+                                title={`Aplicar Meta ${m} do ${tp}`}
+                                className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition-colors"
+                              >
+                                M{m}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         <button
                           onClick={() => applyToAllMonths(vendedor)}
                           className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                          title="Copiar 1o valor para todos os meses"
+                          title="Copiar 1º valor para todos os meses"
                         >
                           <Copy size={14} />
                         </button>
@@ -286,7 +375,7 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
               {filteredVendedores.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="px-4 py-8 text-center text-sm text-slate-400">
+                  <td colSpan={16} className="px-4 py-8 text-center text-sm text-slate-400">
                     Nenhum vendedor encontrado para &quot;{search}&quot;
                   </td>
                 </tr>
