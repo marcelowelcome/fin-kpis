@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Search, Copy, Trash2, Zap } from 'lucide-react'
+import { Search, Trash2, Zap } from 'lucide-react'
 import type { VendorGoal, VendorGoalInput, TipoMeta } from '@/lib/schemas'
 import { TIPO_META_LABELS } from '@/lib/schemas'
 import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
@@ -16,7 +16,21 @@ interface VendorGoalsTableProps {
 }
 
 const MESES_SHORT = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+const NIVEIS = [1, 2, 3] as const
+const NIVEL_LABELS = { 1: 'M1', 2: 'M2', 3: 'M3' }
+const NIVEL_COLORS = {
+  1: 'text-blue-600 bg-blue-50',
+  2: 'text-violet-600 bg-violet-50',
+  3: 'text-emerald-600 bg-emerald-50',
+}
 const TP_STORAGE_KEY = 'vendor-tp-assignments'
+
+type Nivel = 1 | 2 | 3
+
+// key: `${vendedor}|${nivel}|${mes}`
+function makeKey(vendedor: string, nivel: Nivel, mes: number) {
+  return `${vendedor}|${nivel}|${mes}`
+}
 
 export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: VendorGoalsTableProps) {
   const [fatData, setFatData] = useState<Record<string, number>>({})
@@ -39,10 +53,9 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     const tipos: Record<string, TipoMeta> = {}
 
     goals.forEach((g) => {
-      fat[`${g.vendedor}|${g.mes}`] = g.fat_meta
-      if (!tipos[g.vendedor]) {
-        tipos[g.vendedor] = g.tipo_meta ?? 'valor_total'
-      }
+      const nivel = (g.nivel_meta ?? 1) as Nivel
+      fat[makeKey(g.vendedor, nivel, g.mes)] = g.fat_meta
+      if (!tipos[g.vendedor]) tipos[g.vendedor] = g.tipo_meta ?? 'valor_total'
     })
 
     setFatData(fat)
@@ -50,25 +63,21 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     setHasChanges(false)
   }, [goals])
 
-  const getFat = (vendedor: string, mes: number): number =>
-    fatData[`${vendedor}|${mes}`] ?? 0
+  const getFat = (vendedor: string, nivel: Nivel, mes: number): number =>
+    fatData[makeKey(vendedor, nivel, mes)] ?? 0
 
-  const setFat = (vendedor: string, mes: number, value: number) => {
-    setFatData((prev) => ({ ...prev, [`${vendedor}|${mes}`]: value }))
+  const setFat = (vendedor: string, nivel: Nivel, mes: number, value: number) => {
+    setFatData((prev) => ({ ...prev, [makeKey(vendedor, nivel, mes)]: value }))
     setHasChanges(true)
   }
 
-  const getTipo = (vendedor: string): TipoMeta =>
-    tipoData[vendedor] ?? 'valor_total'
-
+  const getTipo = (vendedor: string): TipoMeta => tipoData[vendedor] ?? 'valor_total'
   const setTipo = (vendedor: string, tipo: TipoMeta) => {
     setTipoData((prev) => ({ ...prev, [vendedor]: tipo }))
     setHasChanges(true)
   }
 
-  const getTp = (vendedor: string): TpLevel | null =>
-    tpData[vendedor] ?? null
-
+  const getTp = (vendedor: string): TpLevel | null => tpData[vendedor] ?? null
   const setTp = (vendedor: string, tp: TpLevel | null) => {
     setTpData((prev) => {
       const next = { ...prev }
@@ -79,44 +88,54 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
     })
   }
 
-  const applyTpPlan = (vendedor: string, meta: 1 | 2 | 3) => {
+  // Aplica plano TP para um nivel específico, arredondando valores
+  const applyTpNivel = (vendedor: string, nivel: Nivel) => {
     const tp = getTp(vendedor)
     if (!tp) return
-    const values = TP_PLANS[tp][meta]
+    const values = TP_PLANS[tp][nivel]
     if (!values.length) return
     setFatData((prev) => {
       const next = { ...prev }
-      values.forEach((val, idx) => { next[`${vendedor}|${idx + 1}`] = val })
+      values.forEach((val, idx) => {
+        next[makeKey(vendedor, nivel, idx + 1)] = Math.round(val)
+      })
       return next
     })
     setHasChanges(true)
   }
 
-  const getTotal = (vendedor: string): number => {
+  // Aplica os 3 niveis de uma vez
+  const applyTpAll = (vendedor: string) => {
+    const tp = getTp(vendedor)
+    if (!tp) return
+    setFatData((prev) => {
+      const next = { ...prev }
+      for (const nivel of NIVEIS) {
+        const values = TP_PLANS[tp][nivel]
+        if (!values.length) continue
+        values.forEach((val, idx) => {
+          next[makeKey(vendedor, nivel, idx + 1)] = Math.round(val)
+        })
+      }
+      return next
+    })
+    setHasChanges(true)
+  }
+
+  const getNivelTotal = (vendedor: string, nivel: Nivel): number => {
     let sum = 0
-    for (let m = 1; m <= 12; m++) sum += getFat(vendedor, m)
+    for (let m = 1; m <= 12; m++) sum += getFat(vendedor, nivel, m)
     return sum
   }
 
-  const applyToAllMonths = (vendedor: string) => {
-    let val = 0
-    for (let m = 1; m <= 12; m++) {
-      const v = getFat(vendedor, m)
-      if (v > 0) { val = v; break }
-    }
-    if (val === 0) return
-    setFatData((prev) => {
-      const next = { ...prev }
-      for (let m = 1; m <= 12; m++) next[`${vendedor}|${m}`] = val
-      return next
-    })
-    setHasChanges(true)
-  }
+  const getVendedorTotal = (vendedor: string): number =>
+    NIVEIS.reduce((s, n) => s + getNivelTotal(vendedor, n), 0)
 
   const clearVendedor = (vendedor: string) => {
     setFatData((prev) => {
       const next = { ...prev }
-      for (let m = 1; m <= 12; m++) delete next[`${vendedor}|${m}`]
+      for (const nivel of NIVEIS)
+        for (let m = 1; m <= 12; m++) delete next[makeKey(vendedor, nivel, m)]
       return next
     })
     setHasChanges(true)
@@ -136,8 +155,8 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
   const sortedVendedores = useMemo(() => {
     return [...filteredVendedores].sort((a, b) => {
-      const aHas = getTotal(a) > 0 ? 1 : 0
-      const bHas = getTotal(b) > 0 ? 1 : 0
+      const aHas = getVendedorTotal(a) > 0 ? 1 : 0
+      const bHas = getVendedorTotal(b) > 0 ? 1 : 0
       if (aHas !== bHas) return bHas - aHas
       return a.localeCompare(b)
     })
@@ -146,28 +165,27 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
   const handleSave = async () => {
     const goalsToSave: VendorGoalInput[] = []
-
     for (const vendedor of allVendedores) {
-      const total = getTotal(vendedor)
-      if (total === 0) continue
       const tipo = getTipo(vendedor)
-      for (let mes = 1; mes <= 12; mes++) {
-        goalsToSave.push({
-          ano,
-          mes,
-          vendedor,
-          fat_meta: getFat(vendedor, mes),
-          receita_meta_pct: 0,
-          tipo_meta: tipo,
-        })
+      for (const nivel of NIVEIS) {
+        const total = getNivelTotal(vendedor, nivel)
+        if (total === 0) continue
+        for (let mes = 1; mes <= 12; mes++) {
+          goalsToSave.push({
+            ano, mes, vendedor,
+            fat_meta: getFat(vendedor, nivel, mes),
+            receita_meta_pct: 0,
+            tipo_meta: tipo,
+            nivel_meta: nivel,
+          })
+        }
       }
     }
-
     const success = await onSave(goalsToSave)
     if (success) setHasChanges(false)
   }
 
-  const vendedoresComMeta = allVendedores.filter((v) => getTotal(v) > 0).length
+  const vendedoresComMeta = allVendedores.filter((v) => getVendedorTotal(v) > 0).length
   const vendedoresComTp = allVendedores.filter((v) => getTp(v) !== null).length
 
   return (
@@ -187,9 +205,7 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-500">
             {vendedoresComMeta} de {allVendedores.length} com meta
-            {vendedoresComTp > 0 && (
-              <span className="ml-2 text-amber-600">· {vendedoresComTp} com TP</span>
-            )}
+            {vendedoresComTp > 0 && <span className="ml-2 text-amber-600">· {vendedoresComTp} com TP</span>}
           </span>
           <button
             onClick={handleSave}
@@ -203,16 +219,11 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
 
       {/* Legenda TP */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-slate-400 flex items-center gap-1">
-          <Zap size={11} />
-          Nível TP:
-        </span>
+        <span className="text-xs text-slate-400 flex items-center gap-1"><Zap size={11} />Nível TP:</span>
         {TP_LEVELS.filter(tp => tp !== 'TP5').map((tp) => (
-          <span key={tp} className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${TP_COLORS[tp]}`}>
-            {tp}
-          </span>
+          <span key={tp} className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${TP_COLORS[tp]}`}>{tp}</span>
         ))}
-        <span className="text-xs text-slate-400 ml-2">— clique no nível para atribuir; depois use M1/M2/M3 para preencher o plano</span>
+        <span className="text-xs text-slate-400 ml-1">— atribua o nível e clique <strong>Aplicar</strong> para preencher M1/M2/M3 automaticamente</span>
       </div>
 
       {/* Table */}
@@ -221,164 +232,150 @@ export function VendorGoalsTable({ goals, vendedores, ano, saving, onSave }: Ven
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[300px]">
+                <th className="px-4 py-3 text-left font-medium text-slate-600 sticky left-0 bg-slate-50 z-10 min-w-[220px]">
                   Vendedor
                 </th>
+                <th className="px-2 py-3 text-center font-medium text-slate-400 text-xs min-w-[36px]">—</th>
                 {MESES_SHORT.map((m, i) => (
-                  <th key={i} className="px-1 py-3 text-center font-medium text-slate-600 min-w-[90px]">
-                    {m}
-                  </th>
+                  <th key={i} className="px-1 py-3 text-center font-medium text-slate-600 min-w-[90px]">{m}</th>
                 ))}
                 <th className="px-3 py-3 text-right font-medium text-slate-600 min-w-[110px] border-l border-slate-200">
                   Total Ano
                 </th>
-                <th className="px-2 py-3 text-center font-medium text-slate-400 min-w-[90px]" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody>
               {sortedVendedores.map((vendedor, idx) => {
-                const total = getTotal(vendedor)
-                const hasGoal = total > 0
-                const tipo = getTipo(vendedor)
                 const tp = getTp(vendedor)
+                const tipo = getTipo(vendedor)
                 const hasTpPlan = tp !== null && TP_PLANS[tp][1].length > 0
+                const hasAnyGoal = getVendedorTotal(vendedor) > 0
+
                 return (
-                  <tr
-                    key={vendedor}
-                    className={`group transition-colors ${hasGoal ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30`}
-                  >
-                    {/* Vendedor name + avatar + tipo toggle + TP selector */}
-                    <td className="px-4 py-2 sticky left-0 z-10 bg-inherit">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${
-                            AVATAR_COLORS[idx % AVATAR_COLORS.length]
-                          }`}
-                        >
-                          {getInitials(vendedor)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <span className="text-sm font-medium text-slate-700 truncate block max-w-[150px]" title={vendedor}>
-                            {vendedor}
-                          </span>
-                          {/* Controls row */}
-                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                            {/* Tipo meta */}
-                            {(['valor_total', 'receita'] as TipoMeta[]).map((t) => (
-                              <button
-                                key={t}
-                                onClick={() => setTipo(vendedor, t)}
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                                  tipo === t
-                                    ? t === 'valor_total'
-                                      ? 'bg-blue-100 text-blue-700'
-                                      : 'bg-emerald-100 text-emerald-700'
-                                    : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
-                                }`}
-                              >
-                                {TIPO_META_LABELS[t]}
-                              </button>
-                            ))}
-                            {/* Divider */}
-                            <span className="text-slate-200 select-none">|</span>
-                            {/* TP selector */}
-                            {TP_LEVELS.filter(lv => lv !== 'TP5').map((lv) => (
-                              <button
-                                key={lv}
-                                onClick={() => setTp(vendedor, tp === lv ? null : lv)}
-                                title={tp === lv ? `Remover ${lv}` : `Atribuir ${lv}`}
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                                  tp === lv
-                                    ? TP_COLORS[lv]
-                                    : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
-                                }`}
-                              >
-                                {lv}
-                              </button>
-                            ))}
+                  <tbody key={vendedor} className={`${hasAnyGoal ? '' : 'opacity-60'}`}>
+                    {/* Vendor header row */}
+                    <tr className="bg-slate-50 border-t-2 border-slate-200 group">
+                      <td className="px-4 py-2 sticky left-0 bg-slate-50 z-10" colSpan={1}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${AVATAR_COLORS[idx % AVATAR_COLORS.length]}`}>
+                            {getInitials(vendedor)}
+                          </div>
+                          <div>
+                            <span className="text-sm font-semibold text-slate-800 truncate block max-w-[140px]" title={vendedor}>
+                              {vendedor}
+                            </span>
+                            {/* Tipo + TP selectors */}
+                            <div className="flex items-center gap-0.5 mt-0.5 flex-wrap">
+                              {(['valor_total', 'receita'] as TipoMeta[]).map((t) => (
+                                <button key={t} onClick={() => setTipo(vendedor, t)}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                                    tipo === t
+                                      ? t === 'valor_total' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                                      : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                                  }`}>
+                                  {TIPO_META_LABELS[t]}
+                                </button>
+                              ))}
+                              <span className="text-slate-200 mx-0.5">|</span>
+                              {TP_LEVELS.filter(lv => lv !== 'TP5').map((lv) => (
+                                <button key={lv} onClick={() => setTp(vendedor, tp === lv ? null : lv)}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                                    tp === lv ? TP_COLORS[lv] : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                                  }`}>
+                                  {lv}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
+                      {/* empty nivel cell */}
+                      <td className="px-2 py-2 bg-slate-50" />
+                      {/* empty month cells */}
+                      {MESES_SHORT.map((_, mi) => <td key={mi} className="bg-slate-50" />)}
+                      {/* actions */}
+                      <td className="px-2 py-2 bg-slate-50 border-l border-slate-200">
+                        <div className="flex items-center gap-1 justify-end">
+                          {hasTpPlan && (
+                            <button onClick={() => applyTpAll(vendedor)}
+                              className="px-2 py-1 text-[10px] font-bold rounded bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200 transition-colors whitespace-nowrap">
+                              Aplicar {tp}
+                            </button>
+                          )}
+                          <button onClick={() => clearVendedor(vendedor)}
+                            className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Limpar">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
 
-                    {/* 12 month inputs */}
-                    {MESES_SHORT.map((_, mi) => {
-                      const mes = mi + 1
+                    {/* M1, M2, M3 rows */}
+                    {NIVEIS.map((nivel) => {
+                      const nivelTotal = getNivelTotal(vendedor, nivel)
                       return (
-                        <td key={mes} className="px-1 py-1">
-                          <input
-                            type="number"
-                            min={0}
-                            step={1000}
-                            value={getFat(vendedor, mes) || ''}
-                            onChange={(e) => setFat(vendedor, mes, parseFloat(e.target.value) || 0)}
-                            className="w-full text-right px-1.5 py-1 border border-slate-200 rounded text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-slate-400"
-                            placeholder="0"
-                          />
-                        </td>
+                        <tr key={nivel} className="border-t border-slate-100 hover:bg-blue-50/20 transition-colors group/row">
+                          {/* Sticky vendor cell (empty, just for spacing) */}
+                          <td className="px-4 py-1 sticky left-0 bg-white z-10 group-hover/row:bg-blue-50/20" />
+                          {/* Nivel badge */}
+                          <td className="px-2 py-1 text-center">
+                            <span className={`inline-flex items-center justify-center w-6 h-5 rounded text-[10px] font-bold ${NIVEL_COLORS[nivel]}`}>
+                              {NIVEL_LABELS[nivel]}
+                            </span>
+                          </td>
+                          {/* 12 month inputs */}
+                          {MESES_SHORT.map((_, mi) => {
+                            const mes = mi + 1
+                            return (
+                              <td key={mes} className="px-1 py-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  value={getFat(vendedor, nivel, mes) || ''}
+                                  onChange={(e) => setFat(vendedor, nivel, mes, Math.round(parseFloat(e.target.value) || 0))}
+                                  className="w-full text-right px-1.5 py-1 border border-slate-200 rounded text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                  placeholder="0"
+                                />
+                              </td>
+                            )
+                          })}
+                          {/* Nivel total + apply button */}
+                          <td className="px-3 py-1 text-right border-l border-slate-200 whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1">
+                              {hasTpPlan && (
+                                <button onClick={() => applyTpNivel(vendedor, nivel)}
+                                  title={`Aplicar ${NIVEL_LABELS[nivel]} do ${tp}`}
+                                  className="opacity-0 group-hover/row:opacity-100 px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200 transition-all">
+                                  {NIVEL_LABELS[nivel]}
+                                </button>
+                              )}
+                              {nivelTotal > 0 ? (
+                                <span className={`text-xs font-semibold tabular-nums ${
+                                  nivel === 1 ? 'text-blue-700' : nivel === 2 ? 'text-violet-700' : 'text-emerald-700'
+                                }`}>
+                                  {formatBRL(nivelTotal)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )
                     })}
-
-                    {/* Total */}
-                    <td className="px-3 py-2 text-right border-l border-slate-200 whitespace-nowrap">
-                      {total > 0 ? (
-                        <div>
-                          <span className="font-semibold text-slate-900 tabular-nums">{formatBRL(total)}</span>
-                          <span className={`block text-[10px] font-medium ${
-                            tipo === 'receita' ? 'text-emerald-600' : 'text-blue-600'
-                          }`}>
-                            {TIPO_META_LABELS[tipo]}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-2 py-2">
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {/* Aplicar plano TP */}
-                        {hasTpPlan && (
-                          <div className="flex items-center gap-0.5 mr-1">
-                            {([1, 2, 3] as const).map((m) => (
-                              <button
-                                key={m}
-                                onClick={() => applyTpPlan(vendedor, m)}
-                                title={`Aplicar Meta ${m} do ${tp}`}
-                                className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition-colors"
-                              >
-                                M{m}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => applyToAllMonths(vendedor)}
-                          className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                          title="Copiar 1º valor para todos os meses"
-                        >
-                          <Copy size={14} />
-                        </button>
-                        <button
-                          onClick={() => clearVendedor(vendedor)}
-                          className="p-1 text-slate-400 hover:text-red-500 transition-colors"
-                          title="Limpar metas deste vendedor"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                  </tbody>
                 )
               })}
 
               {filteredVendedores.length === 0 && (
-                <tr>
-                  <td colSpan={16} className="px-4 py-8 text-center text-sm text-slate-400">
-                    Nenhum vendedor encontrado para &quot;{search}&quot;
-                  </td>
-                </tr>
+                <tbody>
+                  <tr>
+                    <td colSpan={16} className="px-4 py-8 text-center text-sm text-slate-400">
+                      Nenhum vendedor encontrado para &quot;{search}&quot;
+                    </td>
+                  </tr>
+                </tbody>
               )}
             </tbody>
           </table>

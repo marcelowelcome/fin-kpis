@@ -150,31 +150,34 @@ export async function GET(request: NextRequest) {
       }
     )
 
-    // 7.5. Enriquecer topVendedores com metas individuais (vendor_goals)
+    // 7.5. Enriquecer topVendedores com metas individuais (vendor_goals) — M1/M2/M3
     const vgMeses = range.meses
     const vendorGoals = await fetchVendorGoals(supabase, vgMeses)
-    // Agregar meta e tipo por vendedor
-    const vgMap = new Map<string, { meta: number; tipo: string }>()
+    // Agregar M1, M2, M3 por vendedor
+    const vgMap = new Map<string, { m1: number; m2: number; m3: number; tipo: string }>()
     for (const vg of vendorGoals) {
-      const existing = vgMap.get(vg.vendedor)
-      if (existing) {
-        existing.meta += vg.fat_meta
-      } else {
-        vgMap.set(vg.vendedor, { meta: vg.fat_meta, tipo: vg.tipo_meta ?? 'valor_total' })
+      const nivel = (vg as VendorGoal).nivel_meta ?? 1
+      if (!vgMap.has(vg.vendedor)) {
+        vgMap.set(vg.vendedor, { m1: 0, m2: 0, m3: 0, tipo: vg.tipo_meta ?? 'valor_total' })
       }
+      const entry = vgMap.get(vg.vendedor)!
+      if (nivel === 1) entry.m1 += vg.fat_meta
+      else if (nivel === 2) entry.m2 += vg.fat_meta
+      else if (nivel === 3) entry.m3 += vg.fat_meta
     }
-    // Attach fatMeta/percRealizado/tipoMeta to each ranking entry
+    // Attach fatMeta (M1) / metaM2 / metaM3 / percRealizado a cada ranking
     for (const key of ['total', 'corp', 'trips', 'weddings'] as const) {
       data.topVendedores[key] = data.topVendedores[key].map((v) => {
         const vg = vgMap.get(v.vendedor)
-        if (!vg || vg.meta <= 0) {
-          return { ...v, fatMeta: null, percRealizado: null, tipoMeta: null }
+        if (!vg || vg.m1 <= 0) {
+          return { ...v, fatMeta: null, percRealizado: null, tipoMeta: null, metaM2: null, metaM3: null }
         }
-        const realizado = v.receitas
         return {
           ...v,
-          fatMeta: vg.meta,
-          percRealizado: realizado / vg.meta,
+          fatMeta: vg.m1,
+          metaM2: vg.m2 > 0 ? vg.m2 : null,
+          metaM3: vg.m3 > 0 ? vg.m3 : null,
+          percRealizado: v.receitas / vg.m1,
           tipoMeta: vg.tipo,
         }
       })

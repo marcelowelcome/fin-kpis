@@ -156,6 +156,7 @@ export interface VendorGoal {
   fat_meta: number
   receita_meta_pct: number  // ex: 0.14 = 14%
   tipo_meta: TipoMeta       // 'valor_total' ou 'receita'
+  nivel_meta: 1 | 2 | 3    // 1=Meta1, 2=Meta2, 3=Meta3
   updated_at: string
 }
 
@@ -166,6 +167,7 @@ export const VendorGoalInputSchema = z.object({
   fat_meta: z.number().min(0),
   receita_meta_pct: z.number().min(0).max(1).default(0),
   tipo_meta: z.enum(['valor_total', 'receita']).default('valor_total'),
+  nivel_meta: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
 })
 
 export type VendorGoalInput = z.infer<typeof VendorGoalInputSchema>
@@ -249,8 +251,10 @@ export interface VendedorRanking {
   receitas: number
   nVendas: number
   ticketMedio: number
-  fatMeta?: number | null       // de vendor_goals, null se sem meta
-  percRealizado?: number | null // realizado / fatMeta
+  fatMeta?: number | null       // M1 — meta base
+  metaM2?: number | null        // M2
+  metaM3?: number | null        // M3
+  percRealizado?: number | null // receitas / fatMeta (M1)
   tipoMeta?: string | null      // 'valor_total' ou 'receita'
 }
 
