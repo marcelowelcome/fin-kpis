@@ -5,6 +5,7 @@ import { UploadZone } from '@/components/upload/UploadZone'
 import { PreviewTable } from '@/components/upload/PreviewTable'
 import { QualityReport } from '@/components/upload/QualityReport'
 import { UploadHistory } from '@/components/history/UploadHistory'
+import { MondeSyncSection } from '@/components/upload/MondeSyncSection'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
@@ -146,6 +147,19 @@ export default function UploadPage() {
               </div>
             </div>
           )}
+        </div>
+      </section>
+
+      {/* --- Seção: Sincronização Monde API --- */}
+      <section>
+        <div className="border-t border-slate-200 pt-8">
+          <h2 className="text-xl font-bold text-slate-900">Integração Monde API</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Sincronize vendas diretamente do CRM Monde, sem exportar planilhas
+          </p>
+        </div>
+        <div className="mt-4">
+          <MondeSyncSection />
         </div>
       </section>
 
