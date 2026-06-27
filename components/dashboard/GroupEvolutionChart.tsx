@@ -15,14 +15,7 @@ import {
 import type { TrendPoint, DailyTrendPoint } from '@/lib/schemas'
 import { formatBRL } from '@/lib/format'
 
-const SERIES = [
-  { key: 'total',    label: 'Grupo',       color: '#1e293b', width: 2.5, dashed: false },
-  { key: 'corp',     label: 'Corporativo', color: '#3b82f6', width: 2,   dashed: false },
-  { key: 'trips',    label: 'Trips',       color: '#10b981', width: 2,   dashed: false },
-  { key: 'weddings', label: 'Weddings',    color: '#D4AC0D', width: 2,   dashed: false },
-] as const
-
-type SeriesKey = typeof SERIES[number]['key']
+type SeriesKey = 'total' | 'corp' | 'trips' | 'weddings'
 type ViewMode = 'mensal' | 'diario'
 
 interface MergedMonthly {
