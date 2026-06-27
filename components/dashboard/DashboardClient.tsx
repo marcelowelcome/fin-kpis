@@ -12,6 +12,7 @@ import { MonthlyChart } from '@/components/dashboard/MonthlyChart'
 import { GroupEvolutionChart } from '@/components/dashboard/GroupEvolutionChart'
 import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
+import { SyncButton } from '@/components/dashboard/SyncButton'
 import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
 import type { VendaKPI } from '@/lib/schemas'
@@ -64,6 +65,7 @@ export function DashboardClient() {
     data,
     loading,
     error,
+    refetch,
     periodo,
     setPeriodo,
     customInicio,
@@ -113,6 +115,7 @@ export function DashboardClient() {
               compareFim={compareFim}
               setCompareFim={setCompareFim}
             />
+            <SyncButton onSynced={refetch} />
             <ExportButton targetId="dashboard-content" filename={`dashboard-${periodo}`} />
           </div>
         </div>
