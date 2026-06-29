@@ -13,9 +13,23 @@ interface Feedback {
   message: string
 }
 
+// O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API Monde
+// (MONDE_V3_API_KEY) e já roda 3x/dia via pg_cron. O botão chama essa função DIRETO, e
+// não /api/monde/sync no Vercel — aquela rota falha porque a MONDE_V3_API_KEY não está
+// setada na conta Vercel do projeto. A função varre as ~20 páginas mais recentes (dedup
+// por número da venda, sem perda); a janela completa de 2026 vem do rebuild agendado.
+// A anon key é pública (já vai no bundle do dashboard), então usá-la no client é seguro.
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const SYNC_ENDPOINT = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/monde-sync`
+// Limite no cliente para o fetch não ficar pendurado para sempre se o servidor travar.
+// 180s para acomodar o pior caso da Edge (varredura de 20 páginas + backoff de retry
+// quando o Monde dá throttling), evitando um "tempo esgotado" enganoso enquanto o sync
+// ainda conclui no servidor (que é idempotente — dedup por número da venda).
+const FETCH_TIMEOUT_MS = 180_000
+
 /**
- * Botão de atualização manual: dispara um sync incremental com a API Monde
- * (mesmas ~25 páginas do cron) e recarrega o dashboard ao concluir.
+ * Botão de atualização manual: dispara a Edge Function `monde-sync` do Supabase
+ * (varre as páginas mais recentes da API Monde) e recarrega o dashboard ao concluir.
  * A janela completa de backfill continua em /upload (MondeSyncSection).
  */
 export function SyncButton({ onSynced }: SyncButtonProps) {
@@ -33,26 +47,48 @@ export function SyncButton({ onSynced }: SyncButtonProps) {
     setSyncing(true)
     setFeedback(null)
 
-    try {
-      const res = await fetch('/api/monde/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'incremental', maxPages: 25 }),
-        cache: 'no-store',
-      })
-      const data = await res.json()
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
-      if (!res.ok) {
-        setFeedback({ type: 'error', message: data?.error?.message ?? `Erro ${res.status}` })
+    try {
+      const res = await fetch(SYNC_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+      const data = await res.json().catch(() => null)
+
+      // A Edge Function devolve { ok, salesInserted, ... } no topo (não em `result`),
+      // e em erro { ok: false, error: <string> } com status 500.
+      if (!res.ok || data?.ok === false) {
+        const message =
+          typeof data?.error === 'string'
+            ? data.error
+            : (data?.error?.message ?? `Erro ${res.status}`)
+        setFeedback({ type: 'error', message })
         return
       }
 
-      const inserted = (data.result?.salesInserted ?? 0).toLocaleString('pt-BR')
+      const inserted = (data?.salesInserted ?? 0).toLocaleString('pt-BR')
       setFeedback({ type: 'success', message: `${inserted} vendas atualizadas` })
       onSynced?.()
     } catch (err) {
-      setFeedback({ type: 'error', message: err instanceof Error ? err.message : 'Erro de conexão' })
+      const message =
+        err instanceof DOMException && err.name === 'AbortError'
+          ? 'Tempo esgotado — tente novamente em instantes'
+          : err instanceof TypeError
+            ? 'Não foi possível conectar ao servidor'
+            : err instanceof Error
+              ? err.message
+              : 'Erro de conexão'
+      setFeedback({ type: 'error', message })
     } finally {
+      clearTimeout(timeout)
       setSyncing(false)
     }
   }
