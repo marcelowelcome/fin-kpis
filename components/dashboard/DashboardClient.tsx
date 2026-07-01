@@ -363,21 +363,15 @@ export function DashboardClient() {
               />
             </KPICard>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2">
-                <MonthlyChart data={data?.trend?.weddings ?? []} dailyData={data?.dailyTrend?.weddings} color="#D4AC0D" loading={loading} />
-              </div>
-              <ForecastCard
-                data={data?.forecast?.weddings ?? EMPTY_FORECAST}
-                meta={data?.weddings.fatMeta ?? 0}
-                realizado={data?.weddings.fatRealizado ?? 0}
-                loading={loading}
-              />
-            </div>
-
             {data?.weddings.subcategorias && Object.keys(data.weddings.subcategorias).length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {Object.entries(data.weddings.subcategorias).map(([sub, kpi]) => {
+                {Object.entries(data.weddings.subcategorias)
+                  .sort(([a], [b]) => {
+                    const order = ['Produção', 'WedMe', 'Planejamento-WED', 'Extras Conv.']
+                    const ia = order.indexOf(a); const ib = order.indexOf(b)
+                    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+                  })
+                  .map(([sub, kpi]) => {
                   const percRecStr = kpi.percReceita !== null ? (kpi.percReceita * 100).toFixed(1) + '%' : '-'
                   const receitaOk = kpi.receitaMetaPct > 0 && kpi.percReceita !== null && kpi.percReceita >= kpi.receitaMetaPct
                   return (
@@ -408,6 +402,18 @@ export function DashboardClient() {
                 })}
               </div>
             )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2">
+                <MonthlyChart data={data?.trend?.weddings ?? []} dailyData={data?.dailyTrend?.weddings} color="#D4AC0D" loading={loading} />
+              </div>
+              <ForecastCard
+                data={data?.forecast?.weddings ?? EMPTY_FORECAST}
+                meta={data?.weddings.fatMeta ?? 0}
+                realizado={data?.weddings.fatRealizado ?? 0}
+                loading={loading}
+              />
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <PipelineCard data={data?.pipeline?.weddings ?? EMPTY_PIPELINE} loading={loading} />

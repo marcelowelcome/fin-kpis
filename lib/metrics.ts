@@ -636,10 +636,28 @@ export function countTaxas(vendas: VendaKPI[]): number {
 /** Mapa de subcategoria label → setor_grupo para metas */
 const SUBCATEGORIA_META_MAP: Record<string, SetorMeta> = {
   'WedMe': 'WEDDINGS-WEDME',
-  'Weddings': 'WEDDINGS-WEDDINGS',
+  'Extras Conv.': 'WEDDINGS-WEDDINGS',
   'Produção': 'WEDDINGS-PRODUCAO',
   'Planejamento-WED': 'WEDDINGS-PLANEJAMENTO',
 }
+
+/**
+ * Produtos de SERVIÇO de casamento — NÃO são "extras de convidados".
+ * O card "Extras Conv." (antigo "Weddings", setor_bruto Weddings) exclui estes:
+ * contratos/pacotes de casamento, cerimonial, extras do casal e bloqueios são
+ * contabilizados à parte (ex.: Contratos) e não representam extras de convidados.
+ * Todo o RESTO do setor Weddings (hospedagem, aéreo, transfers, ingressos, seguro,
+ * etc. — inclusive rótulos da API como "Hotel"/"Aéreo") é Extras Conv.
+ */
+const WEDDINGS_SERVICO_PRODUTOS = new Set([
+  'contrato de casamento',
+  'contrato de casamento - venda online',
+  'atualização de contrato de casamento',
+  'pacote de casamento',
+  'extras casamento',
+  'cerimonial de casamento',
+  'bloqueio hospedagem',
+])
 
 function calcWeddingsSubcategorias(
   vendas: VendaKPI[],
@@ -650,7 +668,13 @@ function calcWeddingsSubcategorias(
 
   const groups: Record<string, VendaKPI[]> = {}
   for (const v of weddingsVendas) {
-    const sub = getWeddingsSubcategoria(v.setor_bruto)
+    let sub = getWeddingsSubcategoria(v.setor_bruto)
+    // Antigo card "Weddings" (setor_bruto Weddings) → "Extras Conv." (extras de
+    // convidados), excluindo os produtos de serviço de casamento.
+    if (sub === 'Weddings') {
+      if (WEDDINGS_SERVICO_PRODUTOS.has((v.produto ?? '').trim().toLowerCase())) continue
+      sub = 'Extras Conv.'
+    }
     if (!groups[sub]) groups[sub] = []
     groups[sub].push(v)
   }
