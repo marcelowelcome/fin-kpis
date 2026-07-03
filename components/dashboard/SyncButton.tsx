@@ -13,11 +13,12 @@ interface Feedback {
   message: string
 }
 
-// O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API Monde
-// (MONDE_V3_API_KEY) e já roda 3x/dia via pg_cron. O botão chama essa função DIRETO, e
-// não /api/monde/sync no Vercel — aquela rota falha porque a MONDE_V3_API_KEY não está
-// setada na conta Vercel do projeto. A função varre as ~20 páginas mais recentes (dedup
-// por número da venda, sem perda); a janela completa de 2026 vem do rebuild agendado.
+// O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API de
+// Dados do Monde (MONDE_DATA_API_KEY) e já roda 3x/dia via pg_cron. O botão chama essa
+// função DIRETO, e não /api/monde/sync no Vercel — aquela rota falha porque a
+// MONDE_DATA_API_KEY não está setada na conta Vercel do projeto. A função varre as ~20
+// páginas mais recentes (dedup por número da venda, sem perda); a janela completa de
+// 2026 vem do rebuild agendado.
 // A anon key é pública (já vai no bundle do dashboard), então usá-la no client é seguro.
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const SYNC_ENDPOINT = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/monde-sync`

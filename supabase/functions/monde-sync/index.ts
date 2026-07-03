@@ -1,8 +1,15 @@
 /**
  * Supabase Edge Function: monde-sync
  *
- * Sincroniza as vendas mais recentes da API Monde v3 → tabela `vendas`, rodando
- * 100% no Supabase (sem depender do Vercel). Agendável via Supabase Cron.
+ * Sincroniza as vendas mais recentes da **API de Dados do Monde** (mirror somente
+ * leitura) → tabela `vendas`, rodando 100% no Supabase (sem depender do Vercel).
+ * Agendável via Supabase Cron. A API do Monde v3 NÃO é mais consultada: só a fonte
+ * mudou — o modelo (`vendas`) e a lógica de sync continuam idênticos.
+ *
+ * Fonte: lista `resource=sales` (identificadores) + `resource=sale&id=<uuid>` por venda,
+ * cujo campo `raw` é o objeto no formato Monde v3 que alimenta o mapper. O detalhe é
+ * obrigatório porque os totais da lista incluem produtos cancelados — só o `raw` expõe
+ * o status por produto (cancelamento + soma dos ativos em vendas mistas).
  *
  * Dedup por NÚMERO DA VENDA (sem perda): apaga só os números buscados e reinsere os
  * ativos — não apaga por intervalo de datas (que subnotificava a faixa recente).
@@ -10,17 +17,20 @@
  * Carry-forward: se a API não traz produto (típico em casamentos) mas já havia um
  * produto (do Excel), preserva-o — não apaga a info que alimenta o KPI de contratos.
  *
- * Secrets (Supabase → Edge Functions → Secrets) — já configurados:
- *   MONDE_V3_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (injetados/automáticos).
+ * Secrets (Supabase → Edge Functions → Secrets):
+ *   MONDE_DATA_API_KEY (header x-api-key da API de Dados),
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (injetados/automáticos).
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
-const MONDE_BASE = 'https://web.monde.com.br/api/v3'
+const MONDE_DATA_URL = Deno.env.get('MONDE_DATA_URL') ??
+  'https://szyrzxvlptqqheizyrxu.supabase.co/functions/v1/monde-data'
 const MAX_PAGES = 20          // ~1.000 vendas mais recentes por execução
-const CONCURRENCY = 4         // páginas buscadas em paralelo (rate limit folgado)
+const LIST_PAGE_SIZE = 50     // vendas por página da lista (mantém a semântica de MAX_PAGES)
+const DETAIL_CONCURRENCY = 12 // requisições de detalhe em paralelo (~10 req/s, sem rate-limit)
 const INSERT_BATCH = 500
 const DELETE_BATCH = 200
 const CUTOFF = '2026-01-01'   // só processa vendas a partir desta data (janela 2026)
@@ -32,6 +42,7 @@ interface MondeProduct {
   status?: string
   canceled_at?: string | null
   supplier?: { name?: string }
+  product_name?: string
   totals?: Record<string, number>
 }
 
@@ -44,6 +55,8 @@ interface MondeSale {
   travel_agent?: { name?: string }
   payer?: { name?: string }
   intermediary?: { name?: string }
+  approver?: { name?: string }  // "Operação Própria" (casal) do Monde
+  others?: MondeProduct[]       // produtos avulsos — traz product_name (ex.: "Contrato de casamento")
   hotels?: MondeProduct[]
   airline_tickets?: MondeProduct[]
   cruises?: MondeProduct[]
@@ -60,65 +73,140 @@ const PRODUCT_KEYS = [
   'train_tickets', 'ground_transportations', 'car_rentals', 'travel_packages',
 ] as const
 
-// ─── Monde API ────────────────────────────────────────────────────────────────
+// ─── API de Dados do Monde ─────────────────────────────────────────────────────
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
 }
 
-async function mondeFetch(page: number, token: string): Promise<Response> {
-  const url = new URL(`${MONDE_BASE}/sales`)
-  url.searchParams.set('page', String(page))
-  url.searchParams.set('size', '100')
+async function dataFetch(params: Record<string, string | number>, apiKey: string): Promise<Response> {
+  const url = new URL(MONDE_DATA_URL)
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(url.toString(), {
-      headers: {
-        Authorization: `Basic ${token}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: { 'x-api-key': apiKey, Accept: 'application/json' },
     })
     if ([408, 429, 500, 502, 503, 504].includes(res.status)) {
-      await sleep(1500 * Math.pow(2, attempt))
+      await sleep(1000 * Math.pow(2, attempt))
       continue
     }
     return res
   }
-  throw new Error('Monde API indisponível após 4 tentativas')
+  throw new Error('API de Dados do Monde indisponível após 4 tentativas')
 }
 
-async function getPage(page: number, token: string): Promise<{ data: MondeSale[]; totalPages: number }> {
-  const res = await mondeFetch(page, token)
-  if (!res.ok) throw new Error(`Monde API ${res.status}`)
-  const json = await res.json()
-  return { data: json.data ?? [], totalPages: json.pagination?.total_pages ?? 1 }
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  async function worker() {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return out
 }
 
-/** Busca MAX_PAGES com concorrência limitada. Ordem das vendas não importa. */
-async function scanPages(token: string): Promise<{ sales: MondeSale[]; totalPages: number; pagesScanned: number }> {
-  const first = await getPage(1, token)
+interface SaleListItem { sale_number: string; sale_id: string }
+
+async function getSalesListPage(page: number, apiKey: string): Promise<{ data: SaleListItem[]; total: number }> {
+  const res = await dataFetch({ resource: 'sales', page, page_size: LIST_PAGE_SIZE }, apiKey)
+  if (!res.ok) throw new Error(`API de Dados do Monde (sales pág ${page}) ${res.status}`)
+  const text = await res.text()
+  let json: { data?: SaleListItem[]; total?: number }
+  try {
+    json = JSON.parse(text)
+  } catch {
+    throw new Error(`API de Dados do Monde (sales pág ${page}) resposta não-JSON: ${text.slice(0, 200)}`)
+  }
+  return { data: json.data ?? [], total: json.total ?? 0 }
+}
+
+// deno-lint-ignore no-explicit-any
+function reconstructSaleFromDetail(detail: any): MondeSale {
+  const byKind: Record<string, MondeProduct[]> = {}
+  for (const p of (detail.products ?? [])) {
+    const kind = String(p.product_kind ?? '')
+    if (!kind) continue
+    ;(byKind[kind] ??= []).push({
+      status: p.status ?? undefined,
+      canceled_at: p.canceled_at ?? null,
+      supplier: { name: p.supplier_name ?? undefined },
+      product_name: p.product_name ?? p.description ?? undefined,
+      totals: { amount: Number(p.total_amount ?? 0) },
+    })
+  }
+  return {
+    sale_id: String(detail.sale_id ?? ''),
+    sale_number: Number(detail.sale_number ?? 0),
+    sale_date: String(detail.sale_date ?? ''),
+    status: String(detail.status ?? ''),
+    custom_fields: detail.custom_fields ?? [],
+    travel_agent: { name: detail.travel_agent_name ?? undefined },
+    payer: { name: detail.payer_name ?? undefined },
+    approver: { name: detail.approver_name ?? undefined },
+    others: byKind['others'],
+    hotels: byKind['hotels'],
+    airline_tickets: byKind['airline_tickets'],
+    cruises: byKind['cruises'],
+    insurances: byKind['insurances'],
+    train_tickets: byKind['train_tickets'],
+    ground_transportations: byKind['ground_transportations'],
+    car_rentals: byKind['car_rentals'],
+    travel_packages: byKind['travel_packages'],
+    totals: { final_value: Number(detail.total_final_value ?? 0), revenue: Number(detail.total_revenue ?? 0) },
+  }
+}
+
+/** Detalhe de uma venda → objeto formato Monde v3 (campo `raw`).
+ *  Isola falhas por venda (poison-pill): um detalhe que falhe não derruba a página
+ *  (Promise.all) nem trava o sync — a venda é pulada/registrada e volta num próximo
+ *  ciclo (o dedup só afeta os números buscados). */
+async function getSaleRaw(saleId: string, apiKey: string): Promise<MondeSale | null> {
+  try {
+    const res = await dataFetch({ resource: 'sale', id: saleId }, apiKey)
+    if (!res.ok) {
+      if (res.status === 404) return null
+      throw new Error(`sale ${res.status}`)
+    }
+    const body = await res.json()
+    const detail = body?.data
+    if (!detail) return null
+    const raw = detail.raw
+    if (raw && typeof raw === 'object') return raw as MondeSale
+    return reconstructSaleFromDetail(detail)
+  } catch (err) {
+    console.warn(`[monde-sync] detalhe da venda ${saleId} pulado: ${err instanceof Error ? err.message : String(err)}`)
+    return null
+  }
+}
+
+/** Uma página: lista os identificadores e resolve o detalhe (`raw`) de cada venda. */
+async function getPage(page: number, apiKey: string): Promise<{ data: MondeSale[]; totalPages: number; total: number }> {
+  const list = await getSalesListPage(page, apiKey)
+  const totalPages = Math.max(1, Math.ceil(list.total / LIST_PAGE_SIZE))
+  const raws = await mapWithConcurrency(list.data, DETAIL_CONCURRENCY, (it) => getSaleRaw(it.sale_id, apiKey))
+  return { data: raws.filter((s): s is MondeSale => s !== null), totalPages, total: list.total }
+}
+
+/** Varre MAX_PAGES em sequência (cada página já paraleliza os detalhes). */
+async function scanPages(apiKey: string): Promise<{ sales: MondeSale[]; totalPages: number; pagesScanned: number }> {
+  const first = await getPage(1, apiKey)
   const totalPages = first.totalPages
   const sales: MondeSale[] = [...first.data]
   let pagesScanned = 1
-  if (!first.data.length) return { sales, totalPages, pagesScanned }
+  if (first.total === 0) return { sales, totalPages, pagesScanned }
 
+  // Termina em lastPage: total_pages = ceil(total/50) e as páginas do mirror são
+  // contíguas. `total` é global (igual em toda página), então não serve de sinal de fim.
   const lastPage = Math.min(MAX_PAGES, totalPages)
-  const queue: number[] = []
-  for (let p = 2; p <= lastPage; p++) queue.push(p)
-
-  let next = 0
-  let stop = false
-  async function worker() {
-    while (!stop) {
-      const i = next++
-      if (i >= queue.length) return
-      const r = await getPage(queue[i], token)
-      pagesScanned++
-      if (!r.data.length) { stop = true; return }
-      sales.push(...r.data)
-    }
+  for (let p = 2; p <= lastPage; p++) {
+    const r = await getPage(p, apiKey)
+    pagesScanned++
+    sales.push(...r.data)
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker()))
   return { sales, totalPages, pagesScanned }
 }
 
@@ -184,6 +272,11 @@ function computeActiveAmounts(sale: MondeSale): { valorTotal: number; receita: n
 }
 
 function inferProduto(sale: MondeSale): string | null {
+  // A API de Dados entrega o produto real em `others[].product_name` (ex.: "Contrato de
+  // casamento", que antes não vinha). Detecta contrato de casamento direto da fonte.
+  if ((sale.others ?? []).some((p) =>
+    (p.product_name ?? '').trim().toLowerCase() === 'contrato de casamento' &&
+    p.status !== 'canceled' && p.status !== 'deleted' && !p.canceled_at)) return 'Contrato de casamento'
   if ((sale.travel_packages?.length ?? 0) > 0) return 'Pacote de Viagem'
   if ((sale.cruises?.length ?? 0) > 0) return 'Cruzeiro'
   if ((sale.hotels?.length ?? 0) > 0 && (sale.airline_tickets?.length ?? 0) > 0) return 'Hotel + Aéreo'
@@ -228,8 +321,8 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
-  const mondeKey = Deno.env.get('MONDE_V3_API_KEY')
-  if (!mondeKey) return json({ ok: false, error: 'MONDE_V3_API_KEY não configurado' }, 500)
+  const apiKey = Deno.env.get('MONDE_DATA_API_KEY')
+  if (!apiKey) return json({ ok: false, error: 'MONDE_DATA_API_KEY não configurado' }, 500)
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -239,12 +332,19 @@ Deno.serve(async (req) => {
   const startedAt = new Date().toISOString()
   try {
     // 1. Buscar páginas
-    const { sales: rawSales, totalPages, pagesScanned } = await scanPages(mondeKey)
+    const { sales: rawSales, totalPages, pagesScanned } = await scanPages(apiKey)
 
     // 2. Janela (>= CUTOFF) + cancelamento
+    // Lista de cancelamento MANUAL (tabela vendas_canceladas): a API não expõe o
+    // cancelamento de algumas vendas (ex.: "Data Cancelamento" preenchida só no
+    // relatório do Monde, sem produto/refund detectável). Essas ficam nessa lista e
+    // são excluídas aqui — não reinseridas E removidas do banco se já existirem
+    // (pois entram em vendaNumeros e o dedup do passo 3 as apaga sem reinserir).
+    const { data: cancRows } = await supabase.from('vendas_canceladas').select('venda_numero')
+    const canceladasManual = new Set((cancRows ?? []).map((r: { venda_numero: number }) => r.venda_numero))
     const inWindow = rawSales.filter((s) => !!s.sale_date && s.sale_date >= CUTOFF)
-    const cancelledCount = inWindow.filter(isCancelled).length
-    const activeSales = inWindow.filter((s) => !isCancelled(s))
+    const cancelledCount = inWindow.filter((s) => isCancelled(s) || canceladasManual.has(s.sale_number)).length
+    const activeSales = inWindow.filter((s) => !isCancelled(s) && !canceladasManual.has(s.sale_number))
     const vendaNumeros = [...new Set(inWindow.map((s) => s.sale_number))]
 
     // 3. Dedup por número da venda + carry-forward do produto existente
@@ -304,6 +404,7 @@ Deno.serve(async (req) => {
         produto,
         fornecedor: inferFornecedor(s),
         representante: null,
+        operacao: s.approver?.name ?? null,
         valor_total: valorTotal,
         receitas: receita,
         faturamento: valorTotal,

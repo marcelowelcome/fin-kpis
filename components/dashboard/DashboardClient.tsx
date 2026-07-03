@@ -13,7 +13,7 @@ import { GroupEvolutionChart } from '@/components/dashboard/GroupEvolutionChart'
 import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
 import { SyncButton } from '@/components/dashboard/SyncButton'
-import { ContratosPopover } from '@/components/dashboard/ContratosPopover'
+import { ContratosPopover, ContratosCard } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
 import type { VendaKPI } from '@/lib/schemas'
 
@@ -362,6 +362,11 @@ export function DashboardClient() {
                 contratos={data?.weddings.contratosDetalhes ?? []}
               />
             </KPICard>
+
+            <ContratosCard
+              count={data?.weddings.nContratos ?? 0}
+              contratos={data?.weddings.contratosDetalhes ?? []}
+            />
 
             {data?.weddings.subcategorias && Object.keys(data.weddings.subcategorias).length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

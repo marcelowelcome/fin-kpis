@@ -202,7 +202,7 @@ export async function GET(request: NextRequest) {
 // =============================================================
 
 const PAGE = 1000
-const COLS = 'id, venda_numero, vendedor, data_venda, setor_bruto, setor_grupo, produto, valor_total, receitas, faturamento, situacao, updated_at'
+const COLS = 'id, venda_numero, vendedor, data_venda, setor_bruto, setor_grupo, produto, operacao, valor_total, receitas, faturamento, situacao, updated_at'
 
 async function fetchAllVendas(
   sb: ReturnType<typeof getSupabaseServer>,

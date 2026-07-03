@@ -133,6 +133,7 @@ function parseRow(raw: Record<string, unknown>): VendaInput | null {
       produto: toStringOrNull(raw['Produto']),
       fornecedor: toStringOrNull(raw['Fornecedor']),
       representante: toStringOrNull(raw['Representante']),
+      operacao: toStringOrNull(raw['Operação Propria'] ?? raw['Operação Própria'] ?? raw['Operacao Propria']),
       valor_total: toNumber(raw['Valor Total']) ?? 0,
       receitas: toNumber(raw['Receitas']) ?? 0,
       faturamento: toNumber(raw['Valor Total']) ?? 0,

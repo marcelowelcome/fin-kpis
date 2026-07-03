@@ -612,7 +612,9 @@ export function filterContratos(vendas: VendaKPI[]): VendaKPI[] {
     (v) =>
       v.setor_grupo === 'WEDDINGS' &&
       v.produto !== null &&
-      PRODUTOS_CONTRATO.includes(v.produto.toLowerCase())
+      PRODUTOS_CONTRATO.includes(v.produto.toLowerCase()) &&
+      // "Contratos vendidos" = contratos fechados (exclui abertos/em andamento)
+      (v.situacao ?? '').toLowerCase() === 'fechada'
   )
 }
 

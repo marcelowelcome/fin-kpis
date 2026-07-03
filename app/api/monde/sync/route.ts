@@ -10,7 +10,9 @@ import { jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
-export const maxDuration = 60
+// 300s como o cron: a varredura de páginas + escrita no banco pode passar de 60s.
+// Com o teto antigo de 60 a função era morta no meio e o cliente via "Failed to fetch".
+export const maxDuration = 300
 
 // ─── DELETE: remove todos os dados Monde do banco ───────────────────────────
 

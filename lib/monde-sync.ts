@@ -96,7 +96,21 @@ function inferSetorBruto(sale: MondeSale): string | null {
   return cf?.value ?? null
 }
 
+/** Produto ativo (não cancelado/deletado) com determinado product_name. */
+function hasActiveProductNamed(sale: MondeSale, nome: string): boolean {
+  const alvo = nome.trim().toLowerCase()
+  return (sale.others ?? []).some(
+    (p) =>
+      (p.product_name ?? '').trim().toLowerCase() === alvo &&
+      p.status !== 'canceled' && p.status !== 'deleted' && !p.canceled_at,
+  )
+}
+
 function inferProduto(sale: MondeSale): string | null {
+  // A API de Dados do Monde agora entrega o produto real em `others[].product_name`
+  // (ex.: "Contrato de casamento", que antes não vinha). Detecta contrato de casamento
+  // direto da fonte — não depende mais de import de relatório nem do de-para de operação.
+  if (hasActiveProductNamed(sale, 'Contrato de casamento')) return 'Contrato de casamento'
   if ((sale.travel_packages?.length ?? 0) > 0) return 'Pacote de Viagem'
   if ((sale.cruises?.length ?? 0) > 0) return 'Cruzeiro'
   if ((sale.hotels?.length ?? 0) > 0 && (sale.airline_tickets?.length ?? 0) > 0) return 'Hotel + Aéreo'
@@ -138,6 +152,7 @@ export function mapSaleToVendaInput(sale: MondeSale): VendaInput {
     produto: inferProduto(sale),
     fornecedor: inferFornecedor(sale),
     representante: null,
+    operacao: sale.approver?.name ?? null,  // "Operação Própria" (casal) do Monde
     valor_total: valorTotal,
     receitas: receita,
     faturamento: valorTotal,

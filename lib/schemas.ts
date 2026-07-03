@@ -74,6 +74,7 @@ export interface Venda {
   produto: string | null
   fornecedor: string | null
   representante: string | null
+  operacao: string | null // "Operação Própria" do Monde (ex.: casal "W - Fulano e Beltrana")
   valor_total: number
   receitas: number
   faturamento: number
@@ -91,6 +92,7 @@ export interface VendaKPI {
   setor_bruto: string | null
   setor_grupo: SetorGrupo
   produto: string | null
+  operacao: string | null
   valor_total: number
   receitas: number
   faturamento: number
@@ -109,6 +111,7 @@ export interface VendaInput {
   produto: string | null
   fornecedor: string | null
   representante: string | null
+  operacao: string | null
   valor_total: number
   receitas: number
   faturamento: number
