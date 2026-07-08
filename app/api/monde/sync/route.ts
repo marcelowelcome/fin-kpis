@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
-import { runMondeSync, MONDE_FILENAME_PREFIX } from '@/lib/monde-sync-runner'
+import { runMondeSync, runMondeSyncDelta, MONDE_FILENAME_PREFIX } from '@/lib/monde-sync-runner'
 import { jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
@@ -50,6 +50,21 @@ export async function DELETE() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
+
+    // Sync INCREMENTAL (delta): só busca da API o que é novo ou mudou (valor, status,
+    // itens). É o caminho do botão "Atualizar" — não estoura o rate-limit por não
+    // rebaixar o detalhe da janela inteira. `dryRun:true` só relata, sem gravar.
+    if (body.mode === 'delta' || body.delta) {
+      const result = await runMondeSyncDelta({
+        startPage: Number(body.startPage) || 1,
+        maxPages: body.maxPages != null ? Number(body.maxPages) : undefined,
+        maxDetails: body.maxDetails != null ? Number(body.maxDetails) : undefined,
+        cutoff: typeof body.cutoff === 'string' ? body.cutoff : undefined,
+        dryRun: !!body.dryRun,
+      })
+      return NextResponse.json({ result })
+    }
+
     const result = await runMondeSync({
       mode: body.mode === 'full' ? 'full' : 'incremental',
       startPage: Number(body.startPage) || 1,

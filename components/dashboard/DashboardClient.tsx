@@ -15,7 +15,7 @@ import { ExportButton } from '@/components/dashboard/ExportButton'
 import { SyncButton } from '@/components/dashboard/SyncButton'
 import { ContratosPopover, ContratosCard } from '@/components/dashboard/ContratosPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
-import type { VendaKPI } from '@/lib/schemas'
+import type { VendaKPI, SetorKPI } from '@/lib/schemas'
 
 function ContratosHighlight({ count, contratos }: { count: number; contratos: VendaKPI[] }) {
   return (
@@ -33,6 +33,70 @@ function ContratosHighlight({ count, contratos }: { count: number; contratos: Ve
         {count === 0 && (
           <span className="text-xs text-amber-400 italic">nenhum no período</span>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** Card de subcategoria de Weddings (Produção, Planejamento-WED, Hospedagem, Extras Conv.). */
+function SubcategoriaCard({ label, kpi }: { label: string; kpi?: SetorKPI }) {
+  if (!kpi) return null
+  const percRecStr = kpi.percReceita !== null ? (kpi.percReceita * 100).toFixed(1) + '%' : '-'
+  const receitaOk = kpi.receitaMetaPct > 0 && kpi.percReceita !== null && kpi.percReceita >= kpi.receitaMetaPct
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs text-slate-500 font-medium">{label}</p>
+        {kpi.percRealizado !== null && (
+          <span className={`text-xs font-bold ${kpi.percRealizado >= 1 ? 'text-green-600' : kpi.percRealizado >= 0.7 ? 'text-amber-600' : 'text-red-600'}`}>
+            {(kpi.percRealizado * 100).toFixed(0)}%
+          </span>
+        )}
+      </div>
+      <p className="text-lg font-semibold text-slate-900 tabular-nums">{formatBRL(kpi.fatRealizado)}</p>
+      {kpi.fatMeta > 0 && (
+        <p className="text-xs text-slate-400 tabular-nums">Meta: {formatBRL(kpi.fatMeta)}</p>
+      )}
+      <div className="flex items-center gap-1.5 mt-1.5">
+        <span className="text-xs text-slate-500">Rec: {formatBRL(kpi.receita)}</span>
+        <span className={`text-xs font-semibold ${receitaOk ? 'text-green-600' : kpi.receitaMetaPct > 0 ? 'text-red-600' : 'text-slate-500'}`}>
+          {percRecStr}
+        </span>
+      </div>
+      <p className="text-xs text-slate-400 mt-0.5">{kpi.nVendas} produtos</p>
+      {kpi.split && (
+        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-3 text-xs text-slate-500">
+          <span>WedMe <span className="font-semibold text-slate-700 tabular-nums">{(kpi.split.wedmePct * 100).toFixed(1)}%</span></span>
+          <span>Weddings <span className="font-semibold text-slate-700 tabular-nums">{(kpi.split.weddingsPct * 100).toFixed(1)}%</span></span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Bloco "Atendimento Conv." = Hospedagem + Extras Conv., com resultado consolidado (metas somadas). */
+function AtendimentoConvGroup({ hospedagem, extras }: { hospedagem?: SetorKPI; extras?: SetorKPI }) {
+  const fatRealizado = (hospedagem?.fatRealizado ?? 0) + (extras?.fatRealizado ?? 0)
+  const fatMeta = (hospedagem?.fatMeta ?? 0) + (extras?.fatMeta ?? 0)
+  const receita = (hospedagem?.receita ?? 0) + (extras?.receita ?? 0)
+  const percRealizado = fatMeta > 0 ? fatRealizado / fatMeta : null
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
+      <div className="flex items-center justify-between mb-0.5">
+        <p className="text-sm font-semibold text-amber-900">Atendimento Conv.</p>
+        {percRealizado !== null && (
+          <span className={`text-xs font-bold ${percRealizado >= 1 ? 'text-green-600' : percRealizado >= 0.7 ? 'text-amber-600' : 'text-red-600'}`}>
+            {(percRealizado * 100).toFixed(0)}%
+          </span>
+        )}
+      </div>
+      <p className="text-xl font-bold text-slate-900 tabular-nums">{formatBRL(fatRealizado)}</p>
+      {fatMeta > 0 && (
+        <p className="text-xs text-slate-500 tabular-nums mb-3">Meta: {formatBRL(fatMeta)} · Rec: {formatBRL(receita)}</p>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <SubcategoriaCard label="Hospedagem" kpi={hospedagem} />
+        <SubcategoriaCard label="Extras Conv." kpi={extras} />
       </div>
     </div>
   )
@@ -369,42 +433,17 @@ export function DashboardClient() {
             />
 
             {data?.weddings.subcategorias && Object.keys(data.weddings.subcategorias).length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {Object.entries(data.weddings.subcategorias)
-                  .sort(([a], [b]) => {
-                    const order = ['Produção', 'WedMe', 'Planejamento-WED', 'Extras Conv.']
-                    const ia = order.indexOf(a); const ib = order.indexOf(b)
-                    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
-                  })
-                  .map(([sub, kpi]) => {
-                  const percRecStr = kpi.percReceita !== null ? (kpi.percReceita * 100).toFixed(1) + '%' : '-'
-                  const receitaOk = kpi.receitaMetaPct > 0 && kpi.percReceita !== null && kpi.percReceita >= kpi.receitaMetaPct
-                  return (
-                    <div key={sub} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs text-slate-500 font-medium">{sub}</p>
-                        {kpi.percRealizado !== null && (
-                          <span className={`text-xs font-bold ${kpi.percRealizado >= 1 ? 'text-green-600' : kpi.percRealizado >= 0.7 ? 'text-amber-600' : 'text-red-600'}`}>
-                            {(kpi.percRealizado * 100).toFixed(0)}%
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-lg font-semibold text-slate-900 tabular-nums">
-                        {formatBRL(kpi.fatRealizado)}
-                      </p>
-                      {kpi.fatMeta > 0 && (
-                        <p className="text-xs text-slate-400 tabular-nums">Meta: {formatBRL(kpi.fatMeta)}</p>
-                      )}
-                      <div className="flex items-center gap-1.5 mt-1.5">
-                        <span className="text-xs text-slate-500">Rec: {formatBRL(kpi.receita)}</span>
-                        <span className={`text-xs font-semibold ${receitaOk ? 'text-green-600' : kpi.receitaMetaPct > 0 ? 'text-red-600' : 'text-slate-500'}`}>
-                          {percRecStr}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">{kpi.nVendas} vendas</p>
-                    </div>
-                  )
-                })}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                {/* Coluna esquerda: cards individuais */}
+                <div className="space-y-4">
+                  <SubcategoriaCard label="Planejamento-WED" kpi={data.weddings.subcategorias['Planejamento-WED']} />
+                  <SubcategoriaCard label="Produção" kpi={data.weddings.subcategorias['Produção']} />
+                </div>
+                {/* Coluna direita: subsetor Atendimento Convidados */}
+                <AtendimentoConvGroup
+                  hospedagem={data.weddings.subcategorias['Hospedagem']}
+                  extras={data.weddings.subcategorias['Extras Conv.']}
+                />
               </div>
             )}
 

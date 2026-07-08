@@ -116,6 +116,8 @@ export interface MondeSale {
   car_rentals?: MondeProduct[]
   travel_packages?: MondeProduct[]
   others?: MondeProduct[]  // produtos "avulsos" — traz product_name (ex.: "Contrato de casamento")
+  cvc_packages?: MondeProduct[]  // pacotes CVC (product_name real)
+  operations?: MondeProduct[]    // itens de operação (product_name = "X -/G -/W - ..."); ENTRA no final_value
   payments?: unknown[]
   totals?: MondeTotals
 }
@@ -173,8 +175,16 @@ async function mapWithConcurrency<T, R>(
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 
 interface SaleListItem {
-  sale_number: string
+  sale_number: string | number
   sale_id: string
+  // Campos que a LISTA já traz de graça (sem custo de detalhe). São a base do sync
+  // incremental: dá para saber o que mudou sem buscar o detalhe de todas as vendas.
+  sale_date?: string
+  status?: string                 // 'opened' | 'closed'
+  total_final_value?: number      // BRUTO (inclui cancelados; bate com raw.totals.final_value)
+  total_revenue?: number
+  product_count?: number
+  custom_fields?: MondeCustomField[]
 }
 
 interface SalesListResponse {
@@ -182,6 +192,31 @@ interface SalesListResponse {
   total: number
   page: number
   page_size: number
+}
+
+/** Linha da lista já normalizada — o que dá para saber SEM buscar o detalhe. */
+export interface SaleListRow {
+  sale_number: number
+  sale_id: string
+  sale_date: string
+  status: string                  // 'opened' | 'closed'
+  total_final_value: number       // bruto — só para DETECTAR mudança, não para persistir
+  total_revenue: number
+  product_count: number
+  custom_fields?: MondeCustomField[]
+}
+
+function toSaleListRow(it: SaleListItem): SaleListRow {
+  return {
+    sale_number: Number(it.sale_number),
+    sale_id: it.sale_id,
+    sale_date: it.sale_date ?? '',
+    status: it.status ?? '',
+    total_final_value: Number(it.total_final_value ?? 0),
+    total_revenue: Number(it.total_revenue ?? 0),
+    product_count: Number(it.product_count ?? 0),
+    custom_fields: it.custom_fields,
+  }
 }
 
 /** Uma página da lista de vendas (só identificadores; produtos vêm do detalhe).
@@ -253,7 +288,7 @@ function reconstructSaleFromDetail(detail: Record<string, unknown>): MondeSale {
  *  — efeito "poison-pill" próprio do modelo 1-detalhe-por-venda. A venda é pulada e
  *  registrada; como o dedup só afeta os números buscados, a pulada fica intacta no
  *  banco e volta num próximo ciclo. Retorna null → filtrada em getMondeSalesPage. */
-async function getSaleRaw(saleId: string): Promise<MondeSale | null> {
+export async function getSaleRaw(saleId: string): Promise<MondeSale | null> {
   try {
     const res = await mondeDataFetch({ resource: 'sale', id: saleId })
     if (!res.ok) {
@@ -326,4 +361,52 @@ export async function scanMondePages(opts: {
   }
 
   return { sales, totalPages, pagesScanned }
+}
+
+// ─── Sync incremental: lista barata + detalhe só do que mudou ──────────────────
+
+/**
+ * Varre N páginas da LISTA apenas (SEM buscar o detalhe de nada). É barato: 1
+ * requisição por página (~50 vendas). A lista já traz status, valores e contagem de
+ * itens — o suficiente para o sync incremental decidir o que mudou. Contrasta com
+ * `scanMondePages`, que resolve o detalhe (`raw`) de TODAS as vendas (~50 req/página)
+ * e por isso estoura o rate-limiter de saída do Edge Runtime.
+ */
+export async function scanSalesListPages(opts: {
+  startPage?: number
+  maxPages?: number
+  onProgress?: (page: number, totalPages: number, count: number) => void
+}): Promise<{ rows: SaleListRow[]; totalPages: number; pagesScanned: number }> {
+  const { startPage = 1, maxPages = 20, onProgress } = opts
+  const rows: SaleListRow[] = []
+  let pagesScanned = 0
+
+  const first = await getSalesListPage(startPage)
+  const total = first.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE))
+  pagesScanned++
+  for (const it of first.data ?? []) rows.push(toSaleListRow(it))
+  onProgress?.(startPage, totalPages, rows.length)
+  if (total === 0) return { rows, totalPages, pagesScanned }
+
+  const lastPage = Math.min(startPage + maxPages - 1, totalPages)
+  for (let p = startPage + 1; p <= lastPage; p++) {
+    const resp = await getSalesListPage(p)
+    pagesScanned++
+    for (const it of resp.data ?? []) rows.push(toSaleListRow(it))
+    onProgress?.(p, totalPages, rows.length)
+  }
+
+  return { rows, totalPages, pagesScanned }
+}
+
+/**
+ * Busca o detalhe (`raw`, formato Monde v3) de uma lista específica de vendas, em
+ * paralelo com concorrência controlada. Falhas por venda são isoladas (poison-pill,
+ * ver `getSaleRaw`). Usado pelo sync incremental: só as vendas NOVAS ou ALTERADAS
+ * chegam aqui — não a janela inteira.
+ */
+export async function fetchSaleRaws(saleIds: string[]): Promise<MondeSale[]> {
+  const raws = await mapWithConcurrency(saleIds, DETAIL_CONCURRENCY, (id) => getSaleRaw(id))
+  return raws.filter((s): s is MondeSale => s !== null)
 }

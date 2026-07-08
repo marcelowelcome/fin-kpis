@@ -637,29 +637,51 @@ export function countTaxas(vendas: VendaKPI[]): number {
 
 /** Mapa de subcategoria label → setor_grupo para metas */
 const SUBCATEGORIA_META_MAP: Record<string, SetorMeta> = {
-  'WedMe': 'WEDDINGS-WEDME',
+  'Hospedagem': 'WEDDINGS-WEDME', // reaproveita a meta do antigo card WedMe
   'Extras Conv.': 'WEDDINGS-WEDDINGS',
   'Produção': 'WEDDINGS-PRODUCAO',
   'Planejamento-WED': 'WEDDINGS-PLANEJAMENTO',
 }
 
 /**
- * Produtos de SERVIÇO de casamento — NÃO são "extras de convidados".
- * O card "Extras Conv." (antigo "Weddings", setor_bruto Weddings) exclui estes:
- * contratos/pacotes de casamento, cerimonial, extras do casal e bloqueios são
- * contabilizados à parte (ex.: Contratos) e não representam extras de convidados.
- * Todo o RESTO do setor Weddings (hospedagem, aéreo, transfers, ingressos, seguro,
- * etc. — inclusive rótulos da API como "Hotel"/"Aéreo") é Extras Conv.
+ * Produtos de hospedagem. O card "Hospedagem" (antigo "WedMe") soma toda Diária de
+ * Hospedagem dos setores WedMe + Weddings. 'Hotel' é o rótulo sintético do sync para
+ * o mesmo produto (ver nota de variantes em EXTRAS_CONV_PRODUTOS).
  */
-const WEDDINGS_SERVICO_PRODUTOS = new Set([
-  'contrato de casamento',
-  'contrato de casamento - venda online',
-  'atualização de contrato de casamento',
-  'pacote de casamento',
-  'extras casamento',
-  'cerimonial de casamento',
-  'bloqueio hospedagem',
-])
+const HOSPEDAGEM_PRODUTOS = new Set(
+  ['Diárias de Hospedagem', 'Diária de Hospedagem', 'Hotel'].map(normalizeProduto),
+)
+
+/** minúsculas + sem acentos, para casar produtos independente de grafia. */
+function normalizeProduto(s: string | null | undefined): string {
+  return (s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+/**
+ * Produtos que contam como "Extras Conv." (extras de convidados) no setor Weddings.
+ * É uma LISTA DE INCLUSÃO: só entra no card o que estiver aqui. Hospedagem/contratos/
+ * cerimonial/pacotes de casamento etc. NÃO entram (são serviço do casal ou vão em
+ * outros cards). O campo `produto` mistura nomes de operação e rótulos sintéticos do
+ * sync para o mesmo produto, então cada linha inclui as variantes conhecidas (já
+ * normalizadas: minúsculas, sem acento).
+ */
+const EXTRAS_CONV_PRODUTOS = new Set(
+  [
+    'Passagem Aérea', 'Aéreo', // aéreo
+    'Pacote Turístico', 'Pacote de Viagem', // pacote turístico
+    'Seguro Viagem',
+    'Transporte Rodoviario', 'Transfer', // transporte rodoviário
+    'Vistos',
+    'Bagagens ou assentos',
+    'Ingressos',
+    'Aluguel de carro', 'Locação de Carro', // aluguel de carro
+    'Receptivo - Traslados e Passeios',
+  ].map(normalizeProduto),
+)
 
 function calcWeddingsSubcategorias(
   vendas: VendaKPI[],
@@ -669,16 +691,26 @@ function calcWeddingsSubcategorias(
   const weddingsVendas = vendas.filter((v) => v.setor_grupo === 'WEDDINGS')
 
   const groups: Record<string, VendaKPI[]> = {}
-  for (const v of weddingsVendas) {
-    let sub = getWeddingsSubcategoria(v.setor_bruto)
-    // Antigo card "Weddings" (setor_bruto Weddings) → "Extras Conv." (extras de
-    // convidados), excluindo os produtos de serviço de casamento.
-    if (sub === 'Weddings') {
-      if (WEDDINGS_SERVICO_PRODUTOS.has((v.produto ?? '').trim().toLowerCase())) continue
-      sub = 'Extras Conv.'
-    }
+  const push = (sub: string, v: VendaKPI) => {
     if (!groups[sub]) groups[sub] = []
     groups[sub].push(v)
+  }
+  for (const v of weddingsVendas) {
+    const setorSub = getWeddingsSubcategoria(v.setor_bruto)
+    const prod = normalizeProduto(v.produto)
+
+    // Subsetor "Atendimento Convidados" = setores WedMe + Weddings, restrito à lista
+    // de produtos (hospedagem + extras). Dentro dele:
+    //   • Hospedagem  → Diária de Hospedagem (nos dois setores)
+    //   • Extras Conv → demais produtos da lista EXTRAS_CONV_PRODUTOS (nos dois setores)
+    // Contratos/pacotes de casamento e produtos fora da lista ficam de fora.
+    if (setorSub === 'WedMe' || setorSub === 'Weddings') {
+      if (HOSPEDAGEM_PRODUTOS.has(prod)) push('Hospedagem', v)
+      else if (EXTRAS_CONV_PRODUTOS.has(prod)) push('Extras Conv.', v)
+      continue
+    }
+    // Produção, Planejamento-WED (e eventuais "Outros") mantêm o card por setor.
+    push(setorSub, v)
   }
 
   const getSubMeta = (sub: string): { fat: number; recPct: number } => {
@@ -695,7 +727,9 @@ function calcWeddingsSubcategorias(
   for (const [sub, subVendas] of Object.entries(groups)) {
     const fatRealizado = sum(subVendas, 'faturamento')
     const receita = sum(subVendas, 'receitas')
-    const nVendas = countUniqueVendas(subVendas)
+    // Contagem por LINHA de produto ("produtos lançados"), não por venda única —
+    // é assim que o relatório Monde conta cada card do subsetor de Weddings.
+    const nVendas = subVendas.length
     const subMeta = getSubMeta(sub)
 
     result[sub] = {
@@ -707,6 +741,19 @@ function calcWeddingsSubcategorias(
       receitaMetaPct: subMeta.recPct,
       ticketMedio: nVendas > 0 ? fatRealizado / nVendas : 0,
       nVendas,
+    }
+
+    // Split por faturamento do card Hospedagem (WedMe vs Weddings).
+    if (sub === 'Hospedagem') {
+      const fatWedme = sum(
+        subVendas.filter((v) => getWeddingsSubcategoria(v.setor_bruto) === 'WedMe'),
+        'faturamento',
+      )
+      const fatWed = fatRealizado - fatWedme
+      result[sub].split =
+        fatRealizado > 0
+          ? { wedmePct: fatWedme / fatRealizado, weddingsPct: fatWed / fatRealizado }
+          : { wedmePct: 0, weddingsPct: 0 }
     }
   }
 

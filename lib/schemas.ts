@@ -19,8 +19,8 @@ export type SetorMetaPrincipal = (typeof SETOR_METAS_PRINCIPAIS)[number]
 
 /** Subcategorias de Weddings para metas */
 export const WEDDINGS_SUBCATEGORIAS_METAS: { id: SetorMeta; label: string }[] = [
-  { id: 'WEDDINGS-WEDME', label: 'WedMe' },
-  { id: 'WEDDINGS-WEDDINGS', label: 'Weddings' },
+  { id: 'WEDDINGS-WEDME', label: 'Hospedagem' },
+  { id: 'WEDDINGS-WEDDINGS', label: 'Extras Conv.' },
   { id: 'WEDDINGS-PRODUCAO', label: 'Produção' },
   { id: 'WEDDINGS-PLANEJAMENTO', label: 'Planejamento-WED' },
 ]
@@ -116,6 +116,8 @@ export interface VendaInput {
   receitas: number
   faturamento: number
   situacao: string | null // 'Aberta' ou 'Fechada'
+  /** Data de cancelamento do produto (ISO). Não-nulo = cancelado → fora dos KPIs. */
+  data_cancelamento: string | null
 }
 
 export interface Upload {
@@ -230,6 +232,11 @@ export interface SetorKPI {
   receitaMetaPct: number    // meta de % receita (ex: 0.14 = 14%)
   ticketMedio: number
   nVendas: number
+  /**
+   * Split do faturamento por origem (só usado no card Hospedagem, que soma
+   * Diária de Hospedagem dos setores WedMe + Weddings). % sobre o faturamento.
+   */
+  split?: { wedmePct: number; weddingsPct: number }
 }
 
 export interface TripsKPI extends SetorKPI {

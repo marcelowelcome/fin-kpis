@@ -15,12 +15,31 @@ import type { VendaInput } from './schemas'
 
 // ─── Produtos: arrays e helpers ───────────────────────────────────────────────
 
+// `others` É INCLUÍDO: traz produtos avulsos com product_name (Contrato de casamento,
+// Bloqueio Hospedagem, Transporte, Vistos, etc.). Sem ele, uma venda cujo ÚNICO produto
+// cancelado está em `others` passava como ativa (bug do cancelamento) e o valor vinha
+// bruto. Também é a base do split por linha de produto.
 const PRODUCT_KEYS: (keyof Pick<MondeSale,
-  'hotels' | 'airline_tickets' | 'cruises' | 'insurances' |
-  'train_tickets' | 'ground_transportations' | 'car_rentals' | 'travel_packages'>)[] = [
-  'hotels', 'airline_tickets', 'cruises', 'insurances',
-  'train_tickets', 'ground_transportations', 'car_rentals', 'travel_packages',
+  'hotels' | 'airline_tickets' | 'cruises' | 'insurances' | 'train_tickets' |
+  'ground_transportations' | 'car_rentals' | 'travel_packages' | 'cvc_packages' |
+  'operations' | 'others'>)[] = [
+  'hotels', 'airline_tickets', 'cruises', 'insurances', 'train_tickets',
+  'ground_transportations', 'car_rentals', 'travel_packages',
+  'cvc_packages', 'operations', 'others',
 ]
+
+/** kind estruturado → nome de operação do Monde (mesmos rótulos do relatório/Excel).
+ *  Produtos em `others` usam o `product_name` real da API. */
+const KIND_PRODUTO: Record<string, string> = {
+  hotels: 'Diárias de Hospedagem',
+  airline_tickets: 'Passagem Aérea',
+  insurances: 'Seguro Viagem',
+  ground_transportations: 'Transporte Rodoviario',
+  car_rentals: 'Locação de Carro',
+  cruises: 'Cruzeiro',
+  train_tickets: 'Trem',
+  travel_packages: 'Pacote de Viagem',
+}
 
 function allProducts(sale: MondeSale): MondeProduct[] {
   const out: MondeProduct[] = []
@@ -96,31 +115,26 @@ function inferSetorBruto(sale: MondeSale): string | null {
   return cf?.value ?? null
 }
 
-/** Produto ativo (não cancelado/deletado) com determinado product_name. */
-function hasActiveProductNamed(sale: MondeSale, nome: string): boolean {
-  const alvo = nome.trim().toLowerCase()
-  return (sale.others ?? []).some(
-    (p) =>
-      (p.product_name ?? '').trim().toLowerCase() === alvo &&
-      p.status !== 'canceled' && p.status !== 'deleted' && !p.canceled_at,
-  )
-}
+/** Uma linha de produto ATIVA da venda — cada uma vira uma linha em `vendas`
+ *  ("produto lançado"). Produtos cancelados/deletados ficam de fora (= "Situação
+ *  Produto: Ativo" do Monde). */
+interface ProdutoLinha { produto: string | null; amount: number; fornecedor: string | null }
 
-function inferProduto(sale: MondeSale): string | null {
-  // A API de Dados do Monde agora entrega o produto real em `others[].product_name`
-  // (ex.: "Contrato de casamento", que antes não vinha). Detecta contrato de casamento
-  // direto da fonte — não depende mais de import de relatório nem do de-para de operação.
-  if (hasActiveProductNamed(sale, 'Contrato de casamento')) return 'Contrato de casamento'
-  if ((sale.travel_packages?.length ?? 0) > 0) return 'Pacote de Viagem'
-  if ((sale.cruises?.length ?? 0) > 0) return 'Cruzeiro'
-  if ((sale.hotels?.length ?? 0) > 0 && (sale.airline_tickets?.length ?? 0) > 0) return 'Hotel + Aéreo'
-  if ((sale.hotels?.length ?? 0) > 0) return 'Hotel'
-  if ((sale.airline_tickets?.length ?? 0) > 0) return 'Aéreo'
-  if ((sale.insurances?.length ?? 0) > 0) return 'Seguro Viagem'
-  if ((sale.train_tickets?.length ?? 0) > 0) return 'Trem'
-  if ((sale.ground_transportations?.length ?? 0) > 0) return 'Transfer'
-  if ((sale.car_rentals?.length ?? 0) > 0) return 'Locação de Carro'
-  return null
+function activeProductLines(sale: MondeSale): ProdutoLinha[] {
+  const lines: ProdutoLinha[] = []
+  for (const key of PRODUCT_KEYS) {
+    const arr = sale[key] as MondeProduct[] | undefined
+    if (!arr?.length) continue
+    for (const p of arr) {
+      if (isInactive(p)) continue
+      const produto = key === 'others' || key === 'operations' || key === 'cvc_packages'
+        ? (p.product_name?.trim() || null)
+        : (KIND_PRODUTO[key as string] ?? null)
+      const amount = (p.totals as Record<string, number> | undefined)?.amount ?? 0
+      lines.push({ produto, amount, fornecedor: p.supplier?.name ?? null })
+    }
+  }
+  return lines
 }
 
 function inferFornecedor(sale: MondeSale): string | null {
@@ -137,27 +151,54 @@ function inferFornecedor(sale: MondeSale): string | null {
 
 // ─── Mapeamento principal ─────────────────────────────────────────────────────
 
-export function mapSaleToVendaInput(sale: MondeSale): VendaInput {
+/**
+ * Mapeia uma venda Monde em UMA LINHA POR PRODUTO ATIVO (como o relatório "Vendas por
+ * produto" do Monde e como o Excel). Antes gerava 1 linha agregada por venda, o que:
+ *  - perdia a contagem de "produtos lançados" dos cards de subsetor de Weddings;
+ *  - colapsava produtos distintos num rótulo sintético só (ex.: "Aéreo").
+ * `valor_total`/`faturamento` = valor do produto; `receitas` = receita da venda rateada
+ * por valor (mesma proporção do computeActiveAmounts). Produtos cancelados ficam fora.
+ *
+ * Venda sem produto ativo identificável → UMA linha com produto nulo (o chamador aplica
+ * carry-forward do produto do Excel), preservando valor/receita.
+ */
+export function mapSaleToVendaLines(sale: MondeSale): VendaInput[] {
   const setor_bruto = inferSetorBruto(sale)
   const setor_grupo = mapSetor(setor_bruto)
-  const { valorTotal, receita } = computeActiveAmounts(sale)
-
-  return {
+  const base = {
     venda_numero: sale.sale_number,
     vendedor: sale.travel_agent?.name ?? 'Sem vendedor',
     data_venda: sale.sale_date,
     pagante: sale.payer?.name ?? sale.intermediary?.name ?? 'Sem cliente',
     setor_bruto,
     setor_grupo,
-    produto: inferProduto(sale),
-    fornecedor: inferFornecedor(sale),
-    representante: null,
+    representante: null as string | null,
     operacao: sale.approver?.name ?? null,  // "Operação Própria" (casal) do Monde
-    valor_total: valorTotal,
-    receitas: receita,
-    faturamento: valorTotal,
     situacao: sale.status === 'opened' ? 'Aberta' : 'Fechada',
+    // Só entram vendas/produtos ATIVOS; a linha nunca representa cancelamento.
+    data_cancelamento: null as string | null,
   }
+
+  const lines = activeProductLines(sale)
+  const { valorTotal, receita } = computeActiveAmounts(sale)
+  const totalAmount = lines.reduce((s, l) => s + l.amount, 0)
+
+  // TRAVA DE SEGURANÇA: só divide em linhas se a soma delas reconcilia com o valor
+  // ativo da venda. Se algum array de produto desconhecido escapar (a soma não bate),
+  // cai para UMA linha agregada com o valor correto — o total de setor NUNCA erra.
+  const reconcilia = lines.length > 0 && Math.abs(totalAmount - valorTotal) <= 0.01
+  if (!reconcilia) {
+    return [{ ...base, produto: null, fornecedor: inferFornecedor(sale), valor_total: valorTotal, receitas: receita, faturamento: valorTotal }]
+  }
+
+  return lines.map((l) => ({
+    ...base,
+    produto: l.produto,
+    fornecedor: l.fornecedor,
+    valor_total: l.amount,
+    receitas: totalAmount > 0 ? Math.round((receita * l.amount / totalAmount) * 100) / 100 : 0,
+    faturamento: l.amount,
+  }))
 }
 
 // ─── Resultado do sync ────────────────────────────────────────────────────────

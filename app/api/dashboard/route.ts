@@ -219,6 +219,7 @@ async function fetchAllVendas(
       .select(COLS)
       .gte('data_venda', inicio)
       .lte('data_venda', fim)
+      .is('data_cancelamento', null) // exclui produtos cancelados (Data Cancelamento não vazio)
     if (vendedor) query = query.eq('vendedor', vendedor)
     const { data, error } = await query
       .order('id', { ascending: true })
@@ -230,12 +231,23 @@ async function fetchAllVendas(
     }
     if (!data || data.length === 0) break
 
-    all.push(...data)
+    // Exclui vendas deletadas ("Excluída") — o Monde as tira via Situação Venda
+    // Aberta;Fechada. Sem isso o faturamento fica inflado em todos os setores.
+    all.push(...data.filter((v) => !isVendaExcluida(v.situacao)))
     if (data.length < PAGE) break
     offset += PAGE
   }
 
   return all
+}
+
+/** True se a venda está deletada no Monde (não deve entrar em nenhum KPI). */
+function isVendaExcluida(situacao: string | null): boolean {
+  return (situacao ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase() === 'excluida'
 }
 
 async function fetchMetas(

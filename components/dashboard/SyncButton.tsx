@@ -16,9 +16,12 @@ interface Feedback {
 // O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API de
 // Dados do Monde (MONDE_DATA_API_KEY) e já roda 3x/dia via pg_cron. O botão chama essa
 // função DIRETO, e não /api/monde/sync no Vercel — aquela rota falha porque a
-// MONDE_DATA_API_KEY não está setada na conta Vercel do projeto. A função varre as ~20
-// páginas mais recentes (dedup por número da venda, sem perda); a janela completa de
-// 2026 vem do rebuild agendado.
+// MONDE_DATA_API_KEY não está setada na conta Vercel do projeto.
+//
+// A função é INCREMENTAL: varre só a lista (barata) das páginas mais recentes e busca
+// o detalhe APENAS das vendas novas ou alteradas (valor/status/itens). Isso mantém o nº
+// de requisições de saída baixo — antes ela buscava o detalhe de ~1.000 vendas e batia
+// no rate-limiter de saída do Edge Runtime ("Rate limit exceeded… Retry after ~56s").
 // A anon key é pública (já vai no bundle do dashboard), então usá-la no client é seguro.
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const SYNC_ENDPOINT = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/monde-sync`
@@ -75,8 +78,18 @@ export function SyncButton({ onSynced }: SyncButtonProps) {
         return
       }
 
-      const inserted = (data?.salesInserted ?? 0).toLocaleString('pt-BR')
-      setFeedback({ type: 'success', message: `${inserted} vendas atualizadas` })
+      // A Edge Function é incremental: só busca da API o que é novo ou mudou. `pending`
+      // > 0 significa que o runtime limitou o nº de buscas neste ciclo (ex.: muitas
+      // mudanças de uma vez) e o resto vem no próximo clique/cron — avisamos o usuário.
+      const inserted = data?.salesInserted ?? 0
+      const pending = data?.pending ?? 0
+      const message =
+        pending > 0
+          ? `${inserted.toLocaleString('pt-BR')} atualizadas · ${pending.toLocaleString('pt-BR')} pendentes — clique de novo`
+          : inserted > 0
+            ? `${inserted.toLocaleString('pt-BR')} ${inserted === 1 ? 'venda atualizada' : 'vendas atualizadas'}`
+            : 'Tudo em dia'
+      setFeedback({ type: 'success', message })
       onSynced?.()
     } catch (err) {
       const message =

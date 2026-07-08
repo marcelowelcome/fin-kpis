@@ -138,6 +138,7 @@ function parseRow(raw: Record<string, unknown>): VendaInput | null {
       receitas: toNumber(raw['Receitas']) ?? 0,
       faturamento: toNumber(raw['Valor Total']) ?? 0,
       situacao: toStringOrNull(raw['Situação'] ?? raw['Situacao'] ?? raw['situacao']),
+      data_cancelamento: parseDateOrNull(findCancelamento(raw)),
     }
   } catch {
     // Linha com dados inválidos — skip
@@ -188,6 +189,33 @@ function parseDate(value: unknown): string {
   }
 
   throw new Error(`Data inválida: ${value}`)
+}
+
+/**
+ * Localiza o valor da coluna de cancelamento independente da grafia exata do header
+ * ("Data Cancelamento", "Data de Cancelamento", "Data Canc.", etc.) — qualquer coluna
+ * cujo nome, sem acento, contenha "cancel".
+ */
+function findCancelamento(raw: Record<string, unknown>): unknown {
+  for (const key of Object.keys(raw)) {
+    const norm = key.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    if (norm.includes('cancel')) return raw[key]
+  }
+  return null
+}
+
+/**
+ * Igual a parseDate, mas retorna null para célula vazia (ou data ilegível) em vez
+ * de lançar. Usado na coluna "Data Cancelamento" — vazio = produto NÃO cancelado.
+ */
+function parseDateOrNull(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  try {
+    return parseDate(value)
+  } catch {
+    return null
+  }
 }
 
 /**
