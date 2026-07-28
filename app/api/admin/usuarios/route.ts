@@ -38,11 +38,12 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/admin/usuarios — Criar usuário ou atualizar role.
+ * POST /api/admin/usuarios — Criar usuário, atualizar role ou redefinir senha.
  *
  * Body:
  *   { action: 'create', email, nome, role, senha }
  *   { action: 'update_role', userId, role }
+ *   { action: 'update_password', userId, senha }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -121,7 +122,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true })
     }
 
-    return jsonError('VALIDATION_ERROR', 'Ação inválida. Use "create" ou "update_role".', 400)
+    if (action === 'update_password') {
+      const { userId, senha } = body as {
+        action: 'update_password'
+        userId: string
+        senha: string
+      }
+
+      if (!userId || !senha) {
+        return jsonError('VALIDATION_ERROR', 'userId e senha são obrigatórios.', 400)
+      }
+
+      if (senha.length < 6) {
+        return jsonError('VALIDATION_ERROR', 'A senha deve ter no mínimo 6 caracteres.', 400)
+      }
+
+      const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
+        password: senha,
+      })
+
+      if (authError) {
+        console.error('Auth updateUserById error:', authError)
+        return jsonError('AUTH_ERROR', authError.message, 400)
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    return jsonError('VALIDATION_ERROR', 'Ação inválida. Use "create", "update_role" ou "update_password".', 400)
   } catch (err) {
     console.error('Usuarios POST error:', err)
     return jsonError('INTERNAL_ERROR', 'Erro ao processar requisição.', 500)

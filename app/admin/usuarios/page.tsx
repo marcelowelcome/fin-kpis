@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth, type Profile } from '@/hooks/useAuth'
 import { formatDateTime } from '@/lib/format'
 import Link from 'next/link'
-import { Users, Plus, X, Loader2 } from 'lucide-react'
+import { Users, Plus, X, Loader2, KeyRound } from 'lucide-react'
 
 export default function UsuariosPage() {
   const { isAdmin, loading: authLoading } = useAuth()
@@ -19,6 +19,13 @@ export default function UsuariosPage() {
   const [formNome, setFormNome] = useState('')
   const [formSenha, setFormSenha] = useState('')
   const [formRole, setFormRole] = useState<'admin' | 'viewer'>('viewer')
+
+  // Reset password modal state
+  const [senhaUser, setSenhaUser] = useState<Profile | null>(null)
+  const [novaSenha, setNovaSenha] = useState('')
+  const [senhaError, setSenhaError] = useState<string | null>(null)
+  const [senhaSubmitting, setSenhaSubmitting] = useState(false)
+  const [senhaSuccess, setSenhaSuccess] = useState(false)
 
   const fetchUsuarios = useCallback(async () => {
     setLoading(true)
@@ -93,6 +100,53 @@ export default function UsuariosPage() {
       setError('Erro ao criar usuário.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleOpenSenhaModal = (user: Profile) => {
+    setSenhaUser(user)
+    setNovaSenha('')
+    setSenhaError(null)
+    setSenhaSuccess(false)
+  }
+
+  const handleCloseSenhaModal = () => {
+    setSenhaUser(null)
+  }
+
+  const handleUpdateSenha = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!senhaUser) return
+
+    setSenhaError(null)
+
+    if (novaSenha.length < 6) {
+      setSenhaError('A senha deve ter no mínimo 6 caracteres.')
+      return
+    }
+
+    setSenhaSubmitting(true)
+    try {
+      const res = await fetch('/api/admin/usuarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_password',
+          userId: senhaUser.id,
+          senha: novaSenha,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSenhaSuccess(true)
+        setNovaSenha('')
+      } else {
+        setSenhaError(data.error?.message || 'Erro ao atualizar senha.')
+      }
+    } catch {
+      setSenhaError('Erro ao atualizar senha.')
+    } finally {
+      setSenhaSubmitting(false)
     }
   }
 
@@ -260,6 +314,7 @@ export default function UsuariosPage() {
                   <th className="text-left px-6 py-3 font-medium text-slate-600">Email</th>
                   <th className="text-left px-6 py-3 font-medium text-slate-600">Role</th>
                   <th className="text-left px-6 py-3 font-medium text-slate-600">Data de criação</th>
+                  <th className="text-left px-6 py-3 font-medium text-slate-600">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -285,6 +340,15 @@ export default function UsuariosPage() {
                     <td className="px-6 py-4 text-slate-500">
                       {formatDateTime(u.created_at)}
                     </td>
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => handleOpenSenhaModal(u)}
+                        className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-blue-700 transition-colors"
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        Alterar senha
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -292,6 +356,74 @@ export default function UsuariosPage() {
           </div>
         )}
       </div>
+
+      {/* Reset password modal */}
+      {senhaUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={handleCloseSenhaModal} />
+          <div className="relative bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+            <h2 className="text-lg font-bold text-slate-900 mb-1">Alterar senha</h2>
+            <p className="text-sm text-slate-500 mb-4">
+              {senhaUser.nome || senhaUser.email}
+            </p>
+
+            {senhaSuccess ? (
+              <>
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700 mb-4">
+                  Senha atualizada. O usuário já pode entrar com a nova senha
+                  (e depois trocá-la pelo próprio login, se quiser).
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleCloseSenhaModal}
+                    className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleUpdateSenha}>
+                {senhaError && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">
+                    {senhaError}
+                  </div>
+                )}
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Nova senha
+                </label>
+                <input
+                  type="password"
+                  value={novaSenha}
+                  onChange={(e) => setNovaSenha(e.target.value)}
+                  required
+                  minLength={6}
+                  autoFocus
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Mínimo 6 caracteres"
+                />
+                <div className="flex gap-3 justify-end">
+                  <button
+                    type="button"
+                    onClick={handleCloseSenhaModal}
+                    className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={senhaSubmitting}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    {senhaSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {senhaSubmitting ? 'Salvando...' : 'Salvar nova senha'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

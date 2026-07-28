@@ -7,6 +7,8 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   if (
     pathname.startsWith('/login') ||
+    pathname.startsWith('/recuperar-senha') ||
+    pathname.startsWith('/atualizar-senha') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.includes('.') ||

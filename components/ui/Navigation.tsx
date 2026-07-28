@@ -38,8 +38,14 @@ export function Navigation() {
   const { collapsed, toggle } = useSidebar()
   const { isAdmin } = useAuth()
 
-  // Não mostrar nav na página de login
-  if (pathname === '/login') return null
+  // Não mostrar nav em páginas públicas de autenticação
+  if (
+    pathname === '/login' ||
+    pathname.startsWith('/recuperar-senha') ||
+    pathname.startsWith('/atualizar-senha')
+  ) {
+    return null
+  }
 
   const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin)
 

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { getSupabaseBrowser } from '@/lib/supabase'
 
 export default function LoginPage() {
@@ -88,6 +89,12 @@ export default function LoginPage() {
             >
               {loading ? 'Entrando...' : 'Entrar'}
             </button>
+
+            <div className="text-center">
+              <Link href="/recuperar-senha" className="text-sm text-slate-500 hover:text-slate-700">
+                Esqueci minha senha
+              </Link>
+            </div>
           </form>
         </div>
       </div>
