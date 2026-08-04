@@ -6,7 +6,7 @@ import { formatBRL } from '@/lib/format'
 
 interface Props {
   count: number
-  contratos: VendaKPI[]
+  taxas: VendaKPI[]
 }
 
 function formatDateBR(iso: string): string {
@@ -14,8 +14,7 @@ function formatDateBR(iso: string): string {
   return `${d}/${m}/${y.slice(2)}`
 }
 
-/** Tabela de contratos — Operação Própria no lugar de Vendedor, sem coluna Produto. */
-function ContratosTable({ contratos }: { contratos: VendaKPI[] }) {
+function TaxasTable({ taxas }: { taxas: VendaKPI[] }) {
   return (
     <table className="w-full text-xs">
       <thead className="sticky top-0 bg-slate-50 text-slate-600">
@@ -23,25 +22,23 @@ function ContratosTable({ contratos }: { contratos: VendaKPI[] }) {
           <th className="text-left px-2 py-1.5 font-medium">#</th>
           <th className="text-left px-2 py-1.5 font-medium">Venda</th>
           <th className="text-left px-2 py-1.5 font-medium">Data</th>
-          <th className="text-left px-2 py-1.5 font-medium">Operação Própria</th>
+          <th className="text-left px-2 py-1.5 font-medium">Vendedor</th>
           <th className="text-right px-2 py-1.5 font-medium">Fat.</th>
-          <th className="text-right px-2 py-1.5 font-medium">Receita</th>
           <th className="text-left px-2 py-1.5 font-medium">Sit.</th>
         </tr>
       </thead>
       <tbody className="text-slate-700">
-        {contratos.length === 0 && (
-          <tr><td colSpan={7} className="text-center py-4 text-slate-400">Nenhum contrato no período</td></tr>
+        {taxas.length === 0 && (
+          <tr><td colSpan={6} className="text-center py-4 text-slate-400">Nenhuma taxa no período</td></tr>
         )}
-        {contratos.map((c, i) => (
-          <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
+        {taxas.map((t, i) => (
+          <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
             <td className="px-2 py-1 text-slate-400">{i + 1}</td>
-            <td className="px-2 py-1 font-mono">{c.venda_numero}</td>
-            <td className="px-2 py-1 whitespace-nowrap">{formatDateBR(c.data_venda)}</td>
-            <td className="px-2 py-1">{c.operacao ?? '-'}</td>
-            <td className="px-2 py-1 text-right whitespace-nowrap">{formatBRL(c.faturamento)}</td>
-            <td className="px-2 py-1 text-right whitespace-nowrap">{formatBRL(c.receitas)}</td>
-            <td className="px-2 py-1 text-slate-500">{c.situacao ?? '-'}</td>
+            <td className="px-2 py-1 font-mono">{t.venda_numero}</td>
+            <td className="px-2 py-1 whitespace-nowrap">{formatDateBR(t.data_venda)}</td>
+            <td className="px-2 py-1">{t.vendedor ?? '-'}</td>
+            <td className="px-2 py-1 text-right whitespace-nowrap">{formatBRL(t.faturamento)}</td>
+            <td className="px-2 py-1 text-slate-500">{t.situacao ?? '-'}</td>
           </tr>
         ))}
       </tbody>
@@ -49,38 +46,18 @@ function ContratosTable({ contratos }: { contratos: VendaKPI[] }) {
   )
 }
 
-function TotaisContratos({ contratos }: { contratos: VendaKPI[] }) {
-  const totalFat = contratos.reduce((s, c) => s + (c.faturamento || 0), 0)
-  const totalRec = contratos.reduce((s, c) => s + (c.receitas || 0), 0)
+function TotalTaxas({ taxas }: { taxas: VendaKPI[] }) {
+  const totalFat = taxas.reduce((s, t) => s + (t.faturamento || 0), 0)
   return (
     <p className="text-xs text-slate-500">
-      Fat. total: <strong>{formatBRL(totalFat)}</strong> · Receita: <strong>{formatBRL(totalRec)}</strong>
+      Fat. total: <strong>{formatBRL(totalFat)}</strong>
     </p>
   )
 }
 
-/**
- * Card SEMPRE VISÍVEL com a lista de contratos (para a aba Weddings).
- * Mostra Operação Própria (casal) em vez de vendedor e omite a coluna Produto.
- */
-export function ContratosCard({ count, contratos }: Props) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-      <div className="flex items-center justify-between mb-2 px-1">
-        <p className="text-sm font-semibold text-slate-800">Contratos vendidos ({count})</p>
-        <TotaisContratos contratos={contratos} />
-      </div>
-      <div className="overflow-auto max-h-96">
-        <ContratosTable contratos={contratos} />
-      </div>
-    </div>
-  )
-}
-
 const MARGIN = 8
-const MAX_WIDTH = 640
+const MAX_WIDTH = 560
 
-/** Posição fixa do popover, ancorada por cima OU por baixo do gatilho. */
 interface PopoverPos {
   left: number
   width: number
@@ -89,8 +66,8 @@ interface PopoverPos {
   maxHeight: number
 }
 
-/** Popover em hover (usado no card compacto da aba Group). */
-export function ContratosPopover({ count, contratos }: Props) {
+/** Popover em hover com a lista de Taxas de Serviço (usado no card compacto de Trips). */
+export function TaxasPopover({ count, taxas }: Props) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<PopoverPos | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -153,11 +130,11 @@ export function ContratosPopover({ count, contratos }: Props) {
           onMouseLeave={handleLeave}
         >
           <div className="flex items-center justify-between mb-2 px-1">
-            <p className="text-sm font-semibold text-slate-800">Contratos considerados ({count})</p>
-            <TotaisContratos contratos={contratos} />
+            <p className="text-sm font-semibold text-slate-800">Taxas de Serviço ({count})</p>
+            <TotalTaxas taxas={taxas} />
           </div>
           <div className="overflow-auto min-h-0">
-            <ContratosTable contratos={contratos} />
+            <TaxasTable taxas={taxas} />
           </div>
         </div>
       )}

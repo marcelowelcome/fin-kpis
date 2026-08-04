@@ -14,6 +14,7 @@ import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
 import { SyncButton } from '@/components/dashboard/SyncButton'
 import { ContratosPopover, ContratosCard } from '@/components/dashboard/ContratosPopover'
+import { TaxasPopover } from '@/components/dashboard/TaxasPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
 import type { VendaKPI, SetorKPI } from '@/lib/schemas'
 
@@ -32,6 +33,27 @@ function ContratosHighlight({ count, contratos }: { count: number; contratos: Ve
         )}
         {count === 0 && (
           <span className="text-xs text-amber-400 italic">nenhum no período</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TaxasHighlight({ count, taxas }: { count: number; taxas: VendaKPI[] }) {
+  return (
+    <div className="mt-3 pt-3 border-t border-emerald-100">
+      <div className="flex items-center justify-between bg-emerald-50 rounded-xl px-3 py-2.5">
+        <div>
+          <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wider mb-0.5">Taxas de Serviço</p>
+          <p className="text-2xl font-bold text-emerald-900 tabular-nums">{count}</p>
+        </div>
+        {count > 0 && (
+          <div className="text-xs text-emerald-600">
+            <TaxasPopover count={count} taxas={taxas} />
+          </div>
+        )}
+        {count === 0 && (
+          <span className="text-xs text-emerald-400 italic">nenhuma no período</span>
         )}
       </div>
     </div>
@@ -144,6 +166,7 @@ const EMPTY_FORECAST = {
   diasRestantes: 0,
   diasDecorridos: 0,
   metaAtingivel: true,
+  metaBase: 0,
 }
 
 export function DashboardClient() {
@@ -274,6 +297,7 @@ export function DashboardClient() {
               delta={data?.delta?.consolidado}
               deltaLabel={data?.deltaLabel}
               expectedPercent={expectedPct}
+              expectedMeta={f?.metaBase}
               loading={loading}
               accent="#1e293b"
             />
@@ -292,6 +316,7 @@ export function DashboardClient() {
                 delta={data?.delta?.corp}
                 deltaLabel={data?.deltaLabel}
                 expectedPercent={expectedPct}
+                expectedMeta={data?.forecast?.corp?.metaBase}
                 loading={loading}
                 accent="#3b82f6"
               />
@@ -308,9 +333,15 @@ export function DashboardClient() {
                 delta={data?.delta?.trips}
                 deltaLabel={data?.deltaLabel}
                 expectedPercent={expectedPct}
+                expectedMeta={data?.forecast?.trips?.metaBase}
                 loading={loading}
                 accent="#10b981"
-              />
+              >
+                <TaxasHighlight
+                  count={data?.trips.nTaxas ?? 0}
+                  taxas={data?.trips.taxasDetalhes ?? []}
+                />
+              </KPICard>
               <KPICard
                 label="Weddings"
                 fatMeta={data?.weddings.fatMeta ?? 0}
@@ -324,6 +355,7 @@ export function DashboardClient() {
                 delta={data?.delta?.weddings}
                 deltaLabel={data?.deltaLabel}
                 expectedPercent={expectedPct}
+                expectedMeta={data?.forecast?.weddings?.metaBase}
                 loading={loading}
                 accent="#D4AC0D"
               >
@@ -387,16 +419,14 @@ export function DashboardClient() {
               delta={data?.delta?.trips}
               deltaLabel={data?.deltaLabel}
               expectedPercent={expectedPct}
+              expectedMeta={f?.metaBase}
               loading={loading}
               accent="#10b981"
             >
-              {data?.trips.nTaxas !== undefined && data.trips.nTaxas > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <p className="text-xs text-slate-500">
-                    Taxas de Serviço: <strong className="text-slate-700">{data.trips.nTaxas}</strong>
-                  </p>
-                </div>
-              )}
+              <TaxasHighlight
+                count={data?.trips.nTaxas ?? 0}
+                taxas={data?.trips.taxasDetalhes ?? []}
+              />
             </KPICard>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -441,6 +471,7 @@ export function DashboardClient() {
               delta={data?.delta?.weddings}
               deltaLabel={data?.deltaLabel}
               expectedPercent={expectedPct}
+              expectedMeta={f?.metaBase}
               loading={loading}
               accent="#D4AC0D"
             >
@@ -512,6 +543,7 @@ export function DashboardClient() {
               delta={data?.delta?.corp}
               deltaLabel={data?.deltaLabel}
               expectedPercent={expectedPct}
+              expectedMeta={f?.metaBase}
               loading={loading}
               accent="#3b82f6"
             />

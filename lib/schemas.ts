@@ -241,6 +241,7 @@ export interface SetorKPI {
 
 export interface TripsKPI extends SetorKPI {
   nTaxas: number
+  taxasDetalhes: VendaKPI[]
 }
 
 export interface WeddingsKPI extends SetorKPI {
@@ -308,6 +309,9 @@ export interface ForecastData {
   diasRestantes: number
   diasDecorridos: number
   metaAtingivel: boolean
+  /** Meta usada no cálculo do ritmo — normalmente = fatMeta do card, mas em
+   *  "acumulado-ano" é a META ANUAL cheia (não o acumulado até hoje). */
+  metaBase: number
 }
 
 export interface DeltaData {
@@ -358,7 +362,7 @@ export interface DashboardData {
     trips: DeltaData | null
     weddings: DeltaData | null
   } | null
-  deltaLabel: string | null  // "vs mês anterior", "vs semana anterior", etc.
+  deltaLabel: string | null  // "vs mesmo período ano anterior", "vs semana anterior", etc.
   ultimaAtualizacao: string | null
 }
 

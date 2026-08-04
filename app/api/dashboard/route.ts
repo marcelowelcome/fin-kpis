@@ -131,6 +131,21 @@ export async function GET(request: NextRequest) {
       trendMetas = metasEfetivas
     }
 
+    // 6.5. "Acumulado 2026": o ritmo (linha indicadora) compara contra a META ANUAL
+    //      (jan-dez inteiros), não contra o acumulado até hoje — senão o período
+    //      "termina hoje" por definição e o ritmo sempre daria 100% decorrido.
+    let forecastOverride: { inicio: string; fim: string; metas: Meta[] } | undefined
+    if (periodo === 'acumulado-ano' && !vendedorParam) {
+      const ano = Number(range.inicio.slice(0, 4))
+      const anoMeses = Array.from({ length: 12 }, (_, i) => ({ ano, mes: i + 1 }))
+      const metasAno = await fetchMetas(supabase, anoMeses)
+      forecastOverride = {
+        inicio: `${ano}-01-01`,
+        fim: `${ano}-12-31`,
+        metas: aggregateMetas(metasAno),
+      }
+    }
+
     // 7. Calcular KPIs com forecast, delta e trend
     const data = calcDashboard(
       vendas as VendaKPI[],
@@ -147,6 +162,7 @@ export async function GET(request: NextRequest) {
           : getDeltaLabel(periodo),
         wtMetaDireta: vendorMetaOverride,
         useReceitaMeta: vendorMetaOverride,
+        forecastOverride,
       }
     )
 
@@ -376,7 +392,7 @@ function getDeltaLabel(periodo: string): string | null {
     case '30d': return 'vs 30 dias anteriores'
     case '90d': return 'vs 90 dias anteriores'
     case 'mes-corrente':
-    case 'mes-passado': return 'vs mês anterior'
+    case 'mes-passado':
     case 'acumulado-ano': return 'vs mesmo período ano anterior'
     case 'todo-periodo': return null
     case 'custom': return 'vs período anterior'

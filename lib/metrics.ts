@@ -82,14 +82,18 @@ export function calcDashboard(
     wtMetaDireta?: boolean
     /** Quando true, percRealizado usa receitas (não faturamento) como numerador */
     useReceitaMeta?: boolean
+    /** Substitui a base do ritmo (forecast): usado por "acumulado-ano" para comparar
+     *  contra a META ANUAL cheia (jan-dez) em vez do acumulado-até-hoje, que por
+     *  definição sempre daria 100% decorrido. */
+    forecastOverride?: { inicio: string; fim: string; metas: Meta[] }
   }
 ): DashboardData {
-  // Proporcionalizar metas até a data de "hoje" dentro do período:
-  // - meses inteiramente passados: meta cheia
-  // - mês corrente: meta × (dias decorridos no mês até hoje / dias do mês)
-  // - meses futuros: 0
-  // - períodos inteiramente no passado: meta cheia (sem corte)
-  const todayStr = localDateToISO(new Date())
+  // Proporcionalizar a meta pela INTERSECÇÃO do mês com o período selecionado —
+  // nunca corta em "hoje" aqui dentro. Períodos que devem parar em hoje (acumulado-ano,
+  // hoje, 7d/14d/30d/90d, esta-semana-ate-hoje) já vêm com periodo.fim = hoje do
+  // getPeriodRange; períodos que vão até o fim do mês/período (mes-corrente,
+  // ultimo-trimestre, custom) devem usar a META CHEIA daquele intervalo — é "a meta
+  // do período selecionado", não uma fatia pré-cortada pelos dias já decorridos.
   const periodoInicio = periodo.inicio
   const periodoFim = periodo.fim
 
@@ -102,10 +106,7 @@ export function calcDashboard(
     const monthEnd = `${m.ano}-${mm}-${String(diasNoMes).padStart(2, '0')}`
     // intersecção com o período solicitado
     const inicioEf = monthStart > periodoInicio ? monthStart : periodoInicio
-    const fimEfPeriodo = monthEnd < periodoFim ? monthEnd : periodoFim
-    if (inicioEf > fimEfPeriodo) continue
-    // corta a janela em "hoje" para não contar dias futuros
-    const fimEf = fimEfPeriodo < todayStr ? fimEfPeriodo : todayStr
+    const fimEf = monthEnd < periodoFim ? monthEnd : periodoFim
     if (inicioEf > fimEf) continue
     const diasContados = diffDays(inicioEf, fimEf) + 1
     const factor = diasContados / diasNoMes
@@ -125,9 +126,11 @@ export function calcDashboard(
   const useReceita = opts?.useReceitaMeta ?? false
 
   const corp = calcSetorKPI(vendas, getMeta('CORP'), 'CORP', getReceitaPct('CORP'), useReceita)
+  const taxasDetalhes = filterTaxas(vendas)
   const trips: TripsKPI = {
     ...calcSetorKPI(vendas, getMeta('TRIPS'), 'TRIPS', getReceitaPct('TRIPS'), useReceita),
-    nTaxas: countTaxas(vendas),
+    nTaxas: taxasDetalhes.length,
+    taxasDetalhes,
   }
   const contratosDetalhes = filterContratos(vendas)
   const weddings: WeddingsKPI = {
@@ -174,12 +177,28 @@ export function calcDashboard(
     weddings: calcTopVendedores(vendas, ['WEDDINGS'], 5),
   }
 
-  // Forecast por setor
+  // Forecast por setor — usa forecastOverride (meta anual cheia) quando presente,
+  // senão a meta/período padrão do card.
+  const fo = opts?.forecastOverride
+  const foInicio = fo?.inicio ?? periodo.inicio
+  const foFim = fo?.fim ?? periodo.fim
+  const getForecastMeta = (setor: SetorMeta): number => {
+    if (!fo) return getMeta(setor)
+    return fo.metas
+      .filter((m) => m.setor_grupo === setor)
+      .reduce((s, m) => s + m.fat_meta, 0)
+  }
+  const wtForecastMeta = opts?.wtMetaDireta
+    ? getForecastMeta('WT')
+    : METAS_WT_AUTO
+      ? getForecastMeta('CORP') + getForecastMeta('TRIPS') + getForecastMeta('WEDDINGS')
+      : getForecastMeta('WT')
+
   const forecast = {
-    total: calcForecast(consolidado.fatRealizado, wtMeta, periodo.inicio, periodo.fim),
-    corp: calcForecast(corp.fatRealizado, getMeta('CORP'), periodo.inicio, periodo.fim),
-    trips: calcForecast(trips.fatRealizado, getMeta('TRIPS'), periodo.inicio, periodo.fim),
-    weddings: calcForecast(weddings.fatRealizado, getMeta('WEDDINGS'), periodo.inicio, periodo.fim),
+    total: calcForecast(consolidado.fatRealizado, wtForecastMeta, foInicio, foFim),
+    corp: calcForecast(corp.fatRealizado, getForecastMeta('CORP'), foInicio, foFim),
+    trips: calcForecast(trips.fatRealizado, getForecastMeta('TRIPS'), foInicio, foFim),
+    weddings: calcForecast(weddings.fatRealizado, getForecastMeta('WEDDINGS'), foInicio, foFim),
   }
 
   // Delta vs período anterior
@@ -577,6 +596,7 @@ export function calcForecast(
     diasRestantes,
     diasDecorridos,
     metaAtingivel: meta > 0 ? projecao >= meta : true,
+    metaBase: meta,
   }
 }
 
@@ -622,13 +642,17 @@ export function countContratos(vendas: VendaKPI[]): number {
   return filterContratos(vendas).length
 }
 
-export function countTaxas(vendas: VendaKPI[]): number {
+export function filterTaxas(vendas: VendaKPI[]): VendaKPI[] {
   return vendas.filter(
     (v) =>
       v.setor_grupo === 'TRIPS' &&
       v.produto !== null &&
       v.produto.toLowerCase() === 'taxa de serviço'
-  ).length
+  )
+}
+
+export function countTaxas(vendas: VendaKPI[]): number {
+  return filterTaxas(vendas).length
 }
 
 // =============================================================
@@ -1041,9 +1065,8 @@ export function calcTrendRange(
 
 /**
  * Calcula o período anterior equivalente para comparação (delta).
- * - mes-corrente → mês anterior
+ * - mes-corrente / mes-passado / acumulado-ano → mesmo período do ano anterior
  * - semana-atual → semana anterior
- * - acumulado-ano → mesmo período do ano anterior
  * - custom → mesmo duração deslocada para trás
  */
 export function getPreviousPeriodRange(
@@ -1056,13 +1079,12 @@ export function getPreviousPeriodRange(
 
   switch (periodo) {
     case 'mes-corrente':
-    case 'mes-passado': {
-      // Mês anterior ao período (1 mês antes)
-      const prevDate = new Date(iy, im - 2, 1)
-      const prevLast = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0)
+    case 'mes-passado':
+    case 'acumulado-ano': {
+      // Mesmo período do ano anterior (mesmo mês/dia, 1 ano antes)
       return {
-        inicio: localDateToISO(prevDate),
-        fim: localDateToISO(prevLast),
+        inicio: `${iy - 1}-${pad(im)}-${pad(id)}`,
+        fim: `${fy - 1}-${pad(fm)}-${pad(fd)}`,
       }
     }
     case 'ultimo-trimestre': {
@@ -1083,13 +1105,6 @@ export function getPreviousPeriodRange(
       return {
         inicio: localDateToISO(prevInicio),
         fim: localDateToISO(prevFim),
-      }
-    }
-    case 'acumulado-ano': {
-      // Mesmo período do ano anterior
-      return {
-        inicio: `${iy - 1}-${pad(im)}-${pad(id)}`,
-        fim: `${fy - 1}-${pad(fm)}-${pad(fd)}`,
       }
     }
     case 'todo-periodo': {

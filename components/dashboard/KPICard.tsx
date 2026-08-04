@@ -21,6 +21,9 @@ interface KPICardProps {
   deltaLabel?: string | null
   /** % esperado do período (0-1) baseado em dias decorridos/total */
   expectedPercent?: number | null
+  /** Meta usada no cálculo do ritmo — normalmente = fatMeta, mas em "acumulado-ano"
+   *  é a meta ANUAL cheia. Se omitida, cai para fatMeta. */
+  expectedMeta?: number | null
   children?: React.ReactNode
 }
 
@@ -40,6 +43,7 @@ export function KPICard({
   delta,
   deltaLabel,
   expectedPercent,
+  expectedMeta,
   children,
 }: KPICardProps) {
   if (loading) {
@@ -108,7 +112,8 @@ export function KPICard({
 
       {/* Progress bar with expected marker + hover tooltip */}
       {fatMeta > 0 && (() => {
-        const expectedValue = expectedPercent != null ? fatMeta * expectedPercent : null
+        const metaParaRitmo = expectedMeta ?? fatMeta
+        const expectedValue = expectedPercent != null ? metaParaRitmo * expectedPercent : null
         const aheadOfSchedule = expectedPercent != null && percRealizado != null
           ? percRealizado >= expectedPercent
           : null
@@ -143,11 +148,11 @@ export function KPICard({
                       {(expectedPercent * 100).toFixed(0)}% do período decorrido
                     </p>
                     <div className="flex items-center justify-between gap-4">
-                      <span className="text-slate-400">Esperado:</span>
+                      <span className="text-slate-400">Valor estimado:</span>
                       <span className="font-semibold tabular-nums">{formatBRL(expectedValue ?? 0)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-4">
-                      <span className="text-slate-400">Realizado:</span>
+                      <span className="text-slate-400">Valor realizado:</span>
                       <span className="font-semibold tabular-nums">{formatBRL(fatRealizado)}</span>
                     </div>
                     {gap !== null && (
