@@ -114,10 +114,12 @@ export function KPICard({
       {fatMeta > 0 && (() => {
         const metaParaRitmo = expectedMeta ?? fatMeta
         const expectedValue = expectedPercent != null ? metaParaRitmo * expectedPercent : null
-        const aheadOfSchedule = expectedPercent != null && percRealizado != null
-          ? percRealizado >= expectedPercent
-          : null
         const gap = expectedValue != null ? fatRealizado - expectedValue : null
+        // Precisa vir do MESMO gap (realizado vs. expectedValue) — comparar
+        // percRealizado (base = fatMeta do card) com expectedPercent (base = metaParaRitmo,
+        // que em "acumulado-ano" é a meta ANUAL) mistura duas bases diferentes e pode
+        // dar sinal errado (ex.: "adiantado" com gap negativo).
+        const aheadOfSchedule = gap != null ? gap >= 0 : null
 
         return (
           <div className="relative w-full h-2.5 bg-slate-100 rounded-full mb-4 group/bar">

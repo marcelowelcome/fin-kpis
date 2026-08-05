@@ -5,7 +5,6 @@ import { useDashboard } from '@/hooks/useDashboard'
 import { KPICard } from '@/components/dashboard/KPICard'
 import { PeriodSelector } from '@/components/dashboard/PeriodSelector'
 import { CompanyTabs } from '@/components/dashboard/CompanyTabs'
-import { PipelineCard } from '@/components/dashboard/PipelineCard'
 import { TopVendedores } from '@/components/dashboard/TopVendedores'
 import { ForecastCard } from '@/components/dashboard/ForecastCard'
 import { MonthlyChart } from '@/components/dashboard/MonthlyChart'
@@ -153,12 +152,6 @@ const QUICK_PERIODS = [
   { key: 'mes-corrente', label: 'Mês atual' },
   { key: 'ultimo-trimestre', label: 'Último trimestre' },
 ]
-
-const EMPTY_PIPELINE = {
-  aberta: { count: 0, valor: 0 },
-  fechada: { count: 0, valor: 0 },
-  taxaConversao: null,
-}
 
 const EMPTY_FORECAST = {
   projecao: 0,
@@ -366,6 +359,12 @@ export function DashboardClient() {
               </KPICard>
             </div>
 
+            {/* Top Vendedores + Top Produtos */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <TopVendedores vendedores={data?.topVendedores?.total ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
+              <TopProdutos produtos={data?.topProdutos?.total ?? []} loading={loading} />
+            </div>
+
             {/* Gráfico evolução multi-setor + Forecast */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
@@ -387,12 +386,6 @@ export function DashboardClient() {
                 realizado={data?.consolidado.fatRealizado ?? 0}
                 loading={loading}
               />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <PipelineCard data={data?.pipeline?.total ?? EMPTY_PIPELINE} loading={loading} />
-              <TopVendedores vendedores={data?.topVendedores?.total ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
-              <TopProdutos produtos={data?.topProdutos?.total ?? []} loading={loading} />
             </div>
           </div>
           )
@@ -429,6 +422,11 @@ export function DashboardClient() {
               />
             </KPICard>
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <TopVendedores vendedores={data?.topVendedores?.trips ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
+              <TopProdutos produtos={data?.topProdutos?.trips ?? []} loading={loading} />
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
                 <MonthlyChart data={data?.trend?.trips ?? []} dailyData={data?.dailyTrend?.trips} color="#10b981" loading={loading} />
@@ -439,12 +437,6 @@ export function DashboardClient() {
                 realizado={data?.trips.fatRealizado ?? 0}
                 loading={loading}
               />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <PipelineCard data={data?.pipeline?.trips ?? EMPTY_PIPELINE} loading={loading} />
-              <TopVendedores vendedores={data?.topVendedores?.trips ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
-              <TopProdutos produtos={data?.topProdutos?.trips ?? []} loading={loading} />
             </div>
           </div>
           )
@@ -501,6 +493,11 @@ export function DashboardClient() {
               contratos={data?.weddings.contratosDetalhes ?? []}
             />
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <TopVendedores vendedores={data?.topVendedores?.weddings ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
+              <TopProdutos produtos={data?.topProdutos?.weddings ?? []} loading={loading} />
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
                 <MonthlyChart data={data?.trend?.weddings ?? []} dailyData={data?.dailyTrend?.weddings} color="#D4AC0D" loading={loading} />
@@ -511,12 +508,6 @@ export function DashboardClient() {
                 realizado={data?.weddings.fatRealizado ?? 0}
                 loading={loading}
               />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <PipelineCard data={data?.pipeline?.weddings ?? EMPTY_PIPELINE} loading={loading} />
-              <TopVendedores vendedores={data?.topVendedores?.weddings ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
-              <TopProdutos produtos={data?.topProdutos?.weddings ?? []} loading={loading} />
             </div>
           </div>
           )
@@ -548,6 +539,11 @@ export function DashboardClient() {
               accent="#3b82f6"
             />
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <TopVendedores vendedores={data?.topVendedores?.corp ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
+              <TopProdutos produtos={data?.topProdutos?.corp ?? []} loading={loading} />
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
                 <MonthlyChart data={data?.trend?.corp ?? []} dailyData={data?.dailyTrend?.corp} color="#3b82f6" loading={loading} />
@@ -558,12 +554,6 @@ export function DashboardClient() {
                 realizado={data?.corp.fatRealizado ?? 0}
                 loading={loading}
               />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <PipelineCard data={data?.pipeline?.corp ?? EMPTY_PIPELINE} loading={loading} />
-              <TopVendedores vendedores={data?.topVendedores?.corp ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
-              <TopProdutos produtos={data?.topProdutos?.corp ?? []} loading={loading} />
             </div>
           </div>
           )

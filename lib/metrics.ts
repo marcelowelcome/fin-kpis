@@ -170,11 +170,14 @@ export function calcDashboard(
     weddings: calcPipeline(vendas, ['WEDDINGS']),
   }
 
+  // Limite alto (não é mais um "top 5" travado) — o card no front mostra os
+  // principais e permite expandir para ver o restante.
+  const TOP_VENDEDORES_LIMIT = 100
   const topVendedores = {
-    total: calcTopVendedores(vendas, SETORES_WT, 5),
-    corp: calcTopVendedores(vendas, ['CORP'], 5),
-    trips: calcTopVendedores(vendas, ['TRIPS'], 5),
-    weddings: calcTopVendedores(vendas, ['WEDDINGS'], 5),
+    total: calcTopVendedores(vendas, SETORES_WT, TOP_VENDEDORES_LIMIT),
+    corp: calcTopVendedores(vendas, ['CORP'], TOP_VENDEDORES_LIMIT),
+    trips: calcTopVendedores(vendas, ['TRIPS'], TOP_VENDEDORES_LIMIT),
+    weddings: calcTopVendedores(vendas, ['WEDDINGS'], TOP_VENDEDORES_LIMIT),
   }
 
   // Forecast por setor — usa forecastOverride (meta anual cheia) quando presente,

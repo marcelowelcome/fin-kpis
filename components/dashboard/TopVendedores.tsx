@@ -1,7 +1,11 @@
 'use client'
 
+import { useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { VendedorRanking } from '@/lib/schemas'
 import { formatBRL, getInitials, AVATAR_COLORS } from '@/lib/format'
+
+const VISIVEIS_PADRAO = 5
 
 interface TopVendedoresProps {
   vendedores: VendedorRanking[]
@@ -47,6 +51,8 @@ function MetaBar({ receitas, m1, m2, m3 }: { receitas: number; m1: number; m2: n
 }
 
 export function TopVendedores({ vendedores, loading = false, activeVendedor, onSelect }: TopVendedoresProps) {
+  const [expanded, setExpanded] = useState(false)
+
   if (loading) {
     return (
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm animate-pulse">
@@ -79,7 +85,7 @@ export function TopVendedores({ vendedores, loading = false, activeVendedor, onS
       </div>
 
       <div className="space-y-4">
-        {vendedores.map((v, i) => {
+        {(expanded ? vendedores : vendedores.slice(0, VISIVEIS_PADRAO)).map((v, i) => {
           const isActive = activeVendedor === v.vendedor
           const hasMetas = v.fatMeta != null && v.fatMeta > 0
           const status = hasMetas ? metaStatus(v.receitas, v.fatMeta!, v.metaM2 ?? null, v.metaM3 ?? null) : null
@@ -151,6 +157,25 @@ export function TopVendedores({ vendedores, loading = false, activeVendedor, onS
           )
         })}
       </div>
+
+      {vendedores.length > VISIVEIS_PADRAO && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full flex items-center justify-center gap-1 mt-4 pt-3 border-t border-slate-100 text-xs font-medium text-blue-600 hover:text-blue-700"
+        >
+          {expanded ? (
+            <>
+              Mostrar menos
+              <ChevronUp size={14} />
+            </>
+          ) : (
+            <>
+              Ver todos ({vendedores.length})
+              <ChevronDown size={14} />
+            </>
+          )}
+        </button>
+      )}
     </div>
   )
 }
