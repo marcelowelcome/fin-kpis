@@ -73,7 +73,9 @@ interface MondeSale {
   travel_packages?: MondeProduct[]
   cvc_packages?: MondeProduct[]  // pacotes CVC (product_name real)
   operations?: MondeProduct[]    // itens de operação (product_name = "X -/G -/W - ..."); ENTRA no final_value
-  totals?: { final_value: number; revenue: number }
+  // API Monde renomeou `final_value` → `final_amount` no formato novo (2026-08-13);
+  // aceita os dois pra não zerar valor_total das vendas pós-mudança.
+  totals?: { final_value?: number; final_amount?: number; revenue: number }
 }
 
 // `operations` e `cvc_packages` INCLUÍDOS: entram no final_value e viram linha de
@@ -236,6 +238,12 @@ async function getSaleRaw(saleId: string, apiKey: string): Promise<MondeSale | n
     const detail = body?.data
     if (!detail) return null
     const raw = detail.raw
+    // O `raw.custom_fields` do formato novo (pós 2026-08-13) perdeu o campo `name`
+    // (só {id, value}) — usa o `custom_fields` normalizado do wrapper, que preserva
+    // `name`, senão inferSetorBruto não acha o setor de nenhuma venda.
+    if (raw && typeof raw === 'object' && Array.isArray(detail.custom_fields)) {
+      (raw as Record<string, unknown>).custom_fields = detail.custom_fields
+    }
     if (raw && typeof raw === 'object') return raw as MondeSale
     return reconstructSaleFromDetail(detail)
   } catch (err) {
@@ -342,7 +350,8 @@ function computeActiveAmounts(sale: MondeSale): { valorTotal: number; receita: n
   const prods = allProducts(sale)
   const hasCanceled = prods.some((p) => p.status === 'canceled')
   if (!hasCanceled) {
-    return { valorTotal: sale.totals?.final_value ?? 0, receita: sale.totals?.revenue ?? 0 }
+    const valorTotal = sale.totals?.final_value ?? sale.totals?.final_amount ?? 0
+    return { valorTotal, receita: sale.totals?.revenue ?? 0 }
   }
   const enriched = prods.map((p) => ({
     status: p.status ?? '',

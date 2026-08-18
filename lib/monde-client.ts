@@ -83,7 +83,9 @@ export interface MondeTotals {
   revenue: number
   payments: number
   balance: number
-  final_value: number
+  final_value?: number
+  /** Nome do campo no formato novo da API Monde (pós 2026-08-13), substitui `final_value`. */
+  final_amount?: number
 }
 
 export interface MondeCustomField {
@@ -300,6 +302,12 @@ export async function getSaleRaw(saleId: string): Promise<MondeSale | null> {
     const detail = body?.data
     if (!detail) return null
     const raw = detail.raw
+    // O `raw.custom_fields` do formato novo (pós 2026-08-13) perdeu o campo `name`
+    // (só {id, value}) — usa o `custom_fields` normalizado do wrapper, que preserva
+    // `name`, senão inferSetorBruto (lib/monde-sync.ts) não acha o setor de nenhuma venda.
+    if (raw && typeof raw === 'object' && Array.isArray(detail.custom_fields)) {
+      (raw as Record<string, unknown>).custom_fields = detail.custom_fields
+    }
     if (raw && typeof raw === 'object') return raw as MondeSale
     return reconstructSaleFromDetail(detail)
   } catch (err) {

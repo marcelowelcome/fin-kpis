@@ -80,8 +80,11 @@ function computeActiveAmounts(sale: MondeSale): { valorTotal: number; receita: n
   const hasCanceled = prods.some((p) => p.status === 'canceled')
 
   if (!hasCanceled) {
-    // Sem produtos cancelados → totals já estão corretos (deleted já excluídos)
-    return { valorTotal: sale.totals?.final_value ?? 0, receita: sale.totals?.revenue ?? 0 }
+    // Sem produtos cancelados → totals já estão corretos (deleted já excluídos).
+    // A API Monde renomeou `final_value` → `final_amount` no formato novo (2026-08-13);
+    // aceita os dois para não zerar valor_total das vendas pós-mudança.
+    const valorTotal = sale.totals?.final_value ?? sale.totals?.final_amount ?? 0
+    return { valorTotal, receita: sale.totals?.revenue ?? 0 }
   }
 
   // Venda mista: somar apenas produtos ativos
