@@ -260,7 +260,7 @@ export interface DeltaSyncOptions {
 
 export interface DeltaChange {
   venda_numero: number
-  motivo: 'nova' | 'status' | 'valor' | 'receita' | 'setor' | 'cancelada-manual'
+  motivo: 'nova' | 'status' | 'valor' | 'receita' | 'setor' | 'vendedor' | 'cancelada-manual'
   de?: string
   para?: string
 }
@@ -323,23 +323,25 @@ export async function runMondeSyncDelta(opts: DeltaSyncOptions = {}): Promise<De
     receitas: number
     produto: string | null
     setorBruto: string | null
+    vendedor: string | null
     uploadIds: Set<string>
   }
   const dbState = new Map<number, DbAgg>()
   for (const numeros of chunk(seenNumeros, DELETE_BATCH)) {
     const { data: dbRows } = await supabase
       .from('vendas')
-      .select('venda_numero, situacao, valor_total, receitas, produto, setor_bruto, upload_id')
+      .select('venda_numero, situacao, valor_total, receitas, produto, setor_bruto, vendedor, upload_id')
       .in('venda_numero', numeros)
     for (const r of dbRows ?? []) {
       const cur = dbState.get(r.venda_numero) ?? {
-        situacao: r.situacao, valor_total: 0, receitas: 0, produto: null, setorBruto: null, uploadIds: new Set<string>(),
+        situacao: r.situacao, valor_total: 0, receitas: 0, produto: null, setorBruto: null, vendedor: null, uploadIds: new Set<string>(),
       }
       cur.valor_total += Number(r.valor_total ?? 0)
       cur.receitas += Number(r.receitas ?? 0)
       cur.situacao = r.situacao
       if (r.produto && !cur.produto) cur.produto = r.produto
       if (r.setor_bruto && !cur.setorBruto) cur.setorBruto = r.setor_bruto
+      if (r.vendedor && !cur.vendedor) cur.vendedor = r.vendedor
       if (r.upload_id) cur.uploadIds.add(r.upload_id)
       dbState.set(r.venda_numero, cur)
     }
@@ -375,11 +377,17 @@ export async function runMondeSyncDelta(opts: DeltaSyncOptions = {}): Promise<De
     if ((setorPara ?? '') !== (d.setorBruto ?? '')) {
       changes.push({ row: r, motivo: 'setor', de: d.setorBruto ?? '—', para: setorPara ?? '—' }); continue
     }
+    // Vendedor atribuído depois do sync inicial: a venda foi importada como "Sem
+    // vendedor" (Monde ainda não tinha atribuído) e agora a lista já traz um nome —
+    // sem isso, "Sem vendedor" ficava congelado para sempre (nada mais muda na venda).
+    if (d.vendedor === 'Sem vendedor' && r.vendedor) {
+      changes.push({ row: r, motivo: 'vendedor', de: d.vendedor, para: r.vendedor }); continue
+    }
     unchanged++
   }
 
   const novas = changes.filter((c) => c.motivo === 'nova').length
-  const alteradas = changes.filter((c) => c.motivo === 'status' || c.motivo === 'valor' || c.motivo === 'receita' || c.motivo === 'setor').length
+  const alteradas = changes.filter((c) => c.motivo === 'status' || c.motivo === 'valor' || c.motivo === 'receita' || c.motivo === 'setor' || c.motivo === 'vendedor').length
 
   // 6. Cap de segurança: as mais recentes vêm primeiro, então o excedente fica p/ o próximo ciclo.
   const capped = changes.length > maxDetails

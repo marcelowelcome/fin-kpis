@@ -187,6 +187,7 @@ interface SaleListItem {
   total_revenue?: number
   product_count?: number
   custom_fields?: MondeCustomField[]
+  travel_agent_name?: string      // detecta vendedor atribuído depois do sync inicial ("Sem vendedor")
 }
 
 interface SalesListResponse {
@@ -206,6 +207,7 @@ export interface SaleListRow {
   total_revenue: number
   product_count: number
   custom_fields?: MondeCustomField[]
+  vendedor: string | null         // nome do vendedor NA LISTA agora — detecta "Sem vendedor" resolvido
 }
 
 function toSaleListRow(it: SaleListItem): SaleListRow {
@@ -218,6 +220,7 @@ function toSaleListRow(it: SaleListItem): SaleListRow {
     total_revenue: Number(it.total_revenue ?? 0),
     product_count: Number(it.product_count ?? 0),
     custom_fields: it.custom_fields,
+    vendedor: it.travel_agent_name ?? null,
   }
 }
 
@@ -307,6 +310,12 @@ export async function getSaleRaw(saleId: string): Promise<MondeSale | null> {
     // `name`, senão inferSetorBruto (lib/monde-sync.ts) não acha o setor de nenhuma venda.
     if (raw && typeof raw === 'object' && Array.isArray(detail.custom_fields)) {
       (raw as Record<string, unknown>).custom_fields = detail.custom_fields
+    }
+    // `raw.travel_agent` não existe no formato novo — só o wrapper (`detail.travel_agent_name`)
+    // traz o vendedor. Sem isso, toda venda que cai no atalho `raw` (a maioria, hoje) perde o
+    // vendedor e vira "Sem vendedor" mesmo com o nome presente no Monde.
+    if (raw && typeof raw === 'object' && detail.travel_agent_name) {
+      (raw as Record<string, unknown>).travel_agent = { name: detail.travel_agent_name }
     }
     if (raw && typeof raw === 'object') return raw as MondeSale
     return reconstructSaleFromDetail(detail)

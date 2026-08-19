@@ -147,6 +147,7 @@ interface SaleListItem {
   total_revenue?: number
   product_count?: number
   custom_fields?: Array<{ name: string; value: string | null }>  // traz "Setor" sem custo de detalhe
+  travel_agent_name?: string      // detecta vendedor atribuído depois do sync inicial ("Sem vendedor")
 }
 
 /** Linha da lista já normalizada — o que dá para saber SEM buscar o detalhe. */
@@ -159,6 +160,7 @@ interface SaleListRow {
   total_revenue: number
   product_count: number
   setorBruto: string | null        // custom field "Setor" — detecta troca de setor sem detalhe
+  vendedor: string | null          // nome do vendedor NA LISTA agora — detecta "Sem vendedor" resolvido
 }
 
 function toSaleListRow(it: SaleListItem): SaleListRow {
@@ -171,6 +173,7 @@ function toSaleListRow(it: SaleListItem): SaleListRow {
     total_revenue: Number(it.total_revenue ?? 0),
     product_count: Number(it.product_count ?? 0),
     setorBruto: (it.custom_fields ?? []).find((f) => f.name === 'Setor')?.value ?? null,
+    vendedor: it.travel_agent_name ?? null,
   }
 }
 
@@ -243,6 +246,12 @@ async function getSaleRaw(saleId: string, apiKey: string): Promise<MondeSale | n
     // `name`, senão inferSetorBruto não acha o setor de nenhuma venda.
     if (raw && typeof raw === 'object' && Array.isArray(detail.custom_fields)) {
       (raw as Record<string, unknown>).custom_fields = detail.custom_fields
+    }
+    // `raw.travel_agent` não existe no formato novo — só o wrapper (`detail.travel_agent_name`)
+    // traz o vendedor. Sem isso, toda venda que cai no atalho `raw` (a maioria, hoje) perde o
+    // vendedor e vira "Sem vendedor" mesmo com o nome presente no Monde.
+    if (raw && typeof raw === 'object' && detail.travel_agent_name) {
+      (raw as Record<string, unknown>).travel_agent = { name: detail.travel_agent_name }
     }
     if (raw && typeof raw === 'object') return raw as MondeSale
     return reconstructSaleFromDetail(detail)
@@ -440,18 +449,19 @@ Deno.serve(async (req) => {
     // 4. Estado atual no banco para os números vistos (agrega por número: o Excel pode
     //    ter várias linhas por venda; a API colapsa em uma). valor/receita são somados.
     const seenNumeros = [...new Set(inWindow.map((r) => r.sale_number))]
-    interface DbAgg { situacao: string | null; valor_total: number; receitas: number; produto: string | null; setorBruto: string | null; uploadIds: Set<string> }
+    interface DbAgg { situacao: string | null; valor_total: number; receitas: number; produto: string | null; setorBruto: string | null; vendedor: string | null; uploadIds: Set<string> }
     const dbState = new Map<number, DbAgg>()
     for (const numeros of chunk(seenNumeros, DELETE_BATCH)) {
       const { data: dbRows } = await supabase
-        .from('vendas').select('venda_numero, situacao, valor_total, receitas, produto, setor_bruto, upload_id').in('venda_numero', numeros)
+        .from('vendas').select('venda_numero, situacao, valor_total, receitas, produto, setor_bruto, vendedor, upload_id').in('venda_numero', numeros)
       for (const r of dbRows ?? []) {
-        const cur = dbState.get(r.venda_numero) ?? { situacao: r.situacao, valor_total: 0, receitas: 0, produto: null, setorBruto: null, uploadIds: new Set<string>() }
+        const cur = dbState.get(r.venda_numero) ?? { situacao: r.situacao, valor_total: 0, receitas: 0, produto: null, setorBruto: null, vendedor: null, uploadIds: new Set<string>() }
         cur.valor_total += Number(r.valor_total ?? 0)
         cur.receitas += Number(r.receitas ?? 0)
         cur.situacao = r.situacao
         if (r.produto && !cur.produto) cur.produto = r.produto
         if (r.setor_bruto && !cur.setorBruto) cur.setorBruto = r.setor_bruto
+        if (r.vendedor && !cur.vendedor) cur.vendedor = r.vendedor
         if (r.upload_id) cur.uploadIds.add(r.upload_id)
         dbState.set(r.venda_numero, cur)
       }
@@ -477,10 +487,14 @@ Deno.serve(async (req) => {
       // Troca de setor: não mexe em valor/status/receita, então só a lista (custom field
       // "Setor") a revela. Sem isso, mudar o setor no Monde não refletia no dash.
       if ((r.setorBruto ?? '') !== (d.setorBruto ?? '')) { changes.push({ row: r, motivo: 'setor' }); continue }
+      // Vendedor atribuído depois do sync inicial: a venda foi importada como "Sem
+      // vendedor" (Monde ainda não tinha atribuído) e agora a lista já traz um nome —
+      // sem isso, "Sem vendedor" ficava congelado para sempre (nada mais muda na venda).
+      if (d.vendedor === 'Sem vendedor' && r.vendedor) { changes.push({ row: r, motivo: 'vendedor' }); continue }
       unchanged++
     }
     const novas = changes.filter((c) => c.motivo === 'nova').length
-    const alteradas = changes.filter((c) => c.motivo === 'status' || c.motivo === 'valor' || c.motivo === 'receita' || c.motivo === 'setor').length
+    const alteradas = changes.filter((c) => c.motivo === 'status' || c.motivo === 'valor' || c.motivo === 'receita' || c.motivo === 'setor' || c.motivo === 'vendedor').length
 
     // 6. Cap de segurança: as mais recentes vêm primeiro; o excedente fica p/ o próximo ciclo.
     const toProcess = changes.length > MAX_DETAILS ? changes.slice(0, MAX_DETAILS) : changes
