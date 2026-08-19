@@ -393,9 +393,10 @@ function getDeltaLabel(periodo: string): string | null {
     case '90d': return 'vs 90 dias anteriores'
     case 'mes-corrente':
     case 'mes-passado':
-    case 'acumulado-ano': return 'vs mesmo período ano anterior'
+    case 'acumulado-ano':
+    case 'ultimo-trimestre':
+    case 'custom': return 'vs mesmo período ano anterior'
     case 'todo-periodo': return null
-    case 'custom': return 'vs período anterior'
     default: return null
   }
 }

@@ -1077,26 +1077,27 @@ export function getPreviousPeriodRange(
   inicio: string,
   fim: string
 ): { inicio: string; fim: string } | null {
+  // O período atual pode se estender além de hoje (ex.: 'mes-corrente' vai até o fim do mês,
+  // 'semana-atual' até domingo, 'custom' se o usuário escolher uma data futura) — sem
+  // realizado nesses dias, mas isso NÃO pode ir para o cálculo do período anterior, senão
+  // comparamos um período em andamento (parcial) com um período anterior completo.
+  const todayStr = localDateToISO(new Date())
+  const fimEfetivo = fim > todayStr ? todayStr : fim
   const [iy, im, id] = inicio.split('-').map(Number)
-  const [fy, fm, fd] = fim.split('-').map(Number)
+  const [fy, fm, fd] = fimEfetivo.split('-').map(Number)
 
   switch (periodo) {
     case 'mes-corrente':
     case 'mes-passado':
-    case 'acumulado-ano': {
-      // Mesmo período do ano anterior (mesmo mês/dia, 1 ano antes)
+    case 'acumulado-ano':
+    case 'ultimo-trimestre':
+    case 'custom': {
+      // Mesmo período do ano anterior: exatamente o mesmo início/fim solicitado, 1 ano antes
+      // (não "duração deslocada para trás" — ver feedback do usuário: "mesmo período no ano
+      // anterior é exatamente o dia de início e fim que está solicitado, mas no ano anterior").
       return {
         inicio: `${iy - 1}-${pad(im)}-${pad(id)}`,
         fim: `${fy - 1}-${pad(fm)}-${pad(fd)}`,
-      }
-    }
-    case 'ultimo-trimestre': {
-      // Trimestre anterior (3 meses antes)
-      const prevStart = new Date(iy, im - 4, 1)
-      const prevEnd = new Date(iy, im - 1, 0)
-      return {
-        inicio: localDateToISO(prevStart),
-        fim: localDateToISO(prevEnd),
       }
     }
     case 'semana-atual':
@@ -1119,10 +1120,10 @@ export function getPreviousPeriodRange(
     case '7d':
     case '14d':
     case '30d':
-    case '90d':
-    case 'custom': {
-      // Mesma duração, deslocada para trás
-      const duracao = diffDays(inicio, fim)
+    case '90d': {
+      // Mesma duração, deslocada para trás (janelas rolantes curtas — comparação tática,
+      // não ano contra ano)
+      const duracao = diffDays(inicio, fimEfetivo)
       const prevFim = new Date(iy, im - 1, id - 1) // dia antes do início atual
       const prevInicio = new Date(prevFim.getFullYear(), prevFim.getMonth(), prevFim.getDate() - duracao)
       return {

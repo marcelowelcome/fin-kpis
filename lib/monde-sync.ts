@@ -84,7 +84,9 @@ function computeActiveAmounts(sale: MondeSale): { valorTotal: number; receita: n
     // A API Monde renomeou `final_value` → `final_amount` no formato novo (2026-08-13);
     // aceita os dois para não zerar valor_total das vendas pós-mudança.
     const valorTotal = sale.totals?.final_value ?? sale.totals?.final_amount ?? 0
-    return { valorTotal, receita: sale.totals?.revenue ?? 0 }
+    // Permutas/patrocínios com 100% de desconto vêm com revenue negativo no Monde
+    // (o relatório do Monde mostra 0 nesses casos, nunca um valor negativo).
+    return { valorTotal, receita: Math.max(sale.totals?.revenue ?? 0, 0) }
   }
 
   // Venda mista: somar apenas produtos ativos
@@ -99,7 +101,7 @@ function computeActiveAmounts(sale: MondeSale): { valorTotal: number; receita: n
 
   // Escalar receita proporcionalmente (deleted já fora do final_value e revenue)
   const knownTotal = activeAmount + canceledAmount
-  const totalRevenue = sale.totals?.revenue ?? 0
+  const totalRevenue = Math.max(sale.totals?.revenue ?? 0, 0)
   const scaledRevenue = knownTotal > 0 ? totalRevenue * (activeAmount / knownTotal) : 0
 
   return { valorTotal: activeAmount, receita: scaledRevenue }
