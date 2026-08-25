@@ -49,6 +49,10 @@ interface MondeProduct {
   canceled_at?: string | null
   supplier?: { name?: string }
   product_name?: string
+  // A API Monde parou de embutir `product_name` em `others`/`operations`/`cvc_packages`
+  // no formato novo (~2026-08-05): só resta essa referência de ID ao catálogo. Ver
+  // PRODUCT_ID_FALLBACK, que resolve o nome por esse ID quando `product_name` some.
+  product?: { id?: string }
   totals?: Record<string, number>
 }
 
@@ -98,6 +102,40 @@ const KIND_PRODUTO: Record<string, string> = {
   cruises: 'Cruzeiro',
   train_tickets: 'Trem',
   travel_packages: 'Pacote de Viagem',
+}
+
+/**
+ * Fallback por ID de catálogo quando `product_name` vem ausente — a API Monde parou
+ * de embutir esse nome em `others`/`operations`/`cvc_packages` a partir de ~2026-08-05
+ * (só resta `product.id`, sem label). IDs confirmados por correlação (mesmo `product.id`
+ * em vendas antigas cujo `produto` já estava gravado corretamente antes da mudança).
+ * Investigado em 2026-08-25 (venda 73950). Só entram aqui IDs verificados — não é
+ * exaustivo, e vendas com ID desconhecido continuam caindo em produto=null.
+ */
+const PRODUCT_ID_FALLBACK: Record<string, string> = {
+  '9d4246ff-5a82-4cd3-a623-ce87db1d857d': 'Contrato de casamento',
+  'a8f03f46-ebd5-44ef-b6bf-87aff153615d': 'Pacote de Casamento',
+  'd1c05a90-f984-4717-acc2-4120918ce12c': 'Extras Casamento',
+  'b107d162-cfd7-4151-8eaf-f02a06063dae': 'Bloqueio Hospedagem',
+  'd958060f-2b6c-4b9d-95cd-eb981a22057d': 'Cerimonial de Casamento',
+  '9c17cd36-95fe-4942-820c-343a2b278025': 'Atualização de Contrato de Casamento',
+  '3f5e8e77-e845-49d9-9aa1-7c45f2c5735f': 'Kit MKT Casamento',
+  '679a2a98-03a2-411e-b785-560a205a16f3': 'Cotas de Lua de Mel',
+  '2a838616-5704-4677-b724-0e12e8e159c6': 'Concierge - Convidados',
+  'bce8b6e5-0d84-4382-a550-daba4e11695d': 'Taxa de Serviço',
+  '10dc8cf5-dc8a-4a39-a646-0ec3331f745a': 'Ingressos',
+  '403b710f-dcef-4a4f-8fd9-f552a4484dde': 'Bagagens ou assentos',
+  'b42f0434-9c36-46ed-96cb-f5c81f025599': 'Receptivo - Traslados e Passeios',
+  '1d98a856-f44f-46f7-ba8c-c458e0d2627b': 'Cruzeiros',
+  'fc5ec952-cc51-4f1d-b1eb-871f18f59220': 'Gift Card Welcome Trips',
+  'c70bdf38-1c2a-4835-8939-8c34e7dc3d78': 'Câmbio',
+  'f16ea6af-d6fc-4998-9ec9-a5e5c357699d': 'Evento',
+  '20da5434-9a06-477c-8497-3a33195d7693': 'Evento Corporativo',
+  '4532c4aa-da01-4f9e-ac97-1549b7ecc09e': 'Amenities',
+  '1f5026a1-f906-4653-b490-95fc146b120c': 'Concierge',
+  '495b3b75-fca8-44a9-a403-134ffba0cdff': 'Ferry',
+  '1d7e19b5-d5e2-4b3f-8f6b-50e0e896d5be': 'Expedição',
+  '476acd66-566d-4a6d-96e4-402fcdf7a216': 'Curso Exterior - Intercâmbio',
 }
 
 // ─── API de Dados do Monde ─────────────────────────────────────────────────────
@@ -384,7 +422,7 @@ function activeProductLines(sale: MondeSale): ProdutoLinha[] {
     for (const p of arr) {
       if (isInactive(p)) continue
       const produto = key === 'others' || key === 'operations' || key === 'cvc_packages'
-        ? (p.product_name?.trim() || null)
+        ? (p.product_name?.trim() || (p.product?.id ? PRODUCT_ID_FALLBACK[p.product.id] ?? null : null))
         : (KIND_PRODUTO[key] ?? null)
       const amount = (p.totals as Record<string, number> | undefined)?.amount ?? 0
       lines.push({ produto, amount, fornecedor: p.supplier?.name ?? null })

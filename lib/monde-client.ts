@@ -73,6 +73,11 @@ export interface MondeProduct {
   commission_amount?: number
   currency?: string
   product_name?: string  // nome real do produto (ex.: "Contrato de casamento") — vem no array `others`
+  // A API Monde parou de embutir `product_name` em `others`/`operations`/`cvc_packages`
+  // no formato novo (~2026-08-05): só resta essa referência de ID ao catálogo. Ver
+  // PRODUCT_ID_FALLBACK em monde-sync.ts, que resolve o nome por esse ID quando
+  // `product_name` vem ausente.
+  product?: { id?: string }
   totals?: Record<string, number>
 }
 
