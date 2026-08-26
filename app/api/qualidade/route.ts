@@ -1,59 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
+import { jsonError, todayISO } from '@/lib/api-utils'
 import { calcScoreFromAlerts } from '@/lib/data-quality'
-import type { Upload } from '@/lib/schemas'
-import { jsonError } from '@/lib/api-utils'
+import { checkSyncQuality, type SyncQualityRow } from '@/lib/sync-quality'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+const PAGE = 1000
+const COLS = 'venda_numero, data_venda, vendedor, setor_grupo, produto, fornecedor, operacao, valor_total, situacao'
+
+/** Exclui produtos cancelados e vendas deletadas — mesmo critério do dashboard. */
+function isVendaExcluida(situacao: string | null): boolean {
+  return (situacao ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase() === 'excluida'
+}
+
+async function fetchAnoAtual(sb: ReturnType<typeof getSupabaseServer>): Promise<SyncQualityRow[]> {
+  const inicioAno = `${todayISO().slice(0, 4)}-01-01`
+  const rows: SyncQualityRow[] = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await sb
+      .from('vendas')
+      .select(COLS)
+      .gte('data_venda', inicioAno)
+      .is('data_cancelamento', null)
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE - 1)
+
+    if (error) throw error
+    if (!data || data.length === 0) break
+
+    rows.push(...(data as SyncQualityRow[]).filter((v) => !isVendaExcluida(v.situacao)))
+    if (data.length < PAGE) break
+    offset += PAGE
+  }
+
+  return rows
+}
+
 /**
- * GET /api/qualidade — Score agregado e timeline de qualidade dos uploads.
+ * GET /api/qualidade — Monitor de qualidade do sync com a API do Monde (ano atual).
+ * Substitui o antigo score baseado em upload de Excel (descontinuado desde a
+ * migração 100% API em 2026-08-07) por uma checagem ao vivo da tabela `vendas`.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function GET(_request: NextRequest) {
   try {
     const supabase = getSupabaseServer()
-
-    const { data: uploads, error } = await supabase
-      .from('uploads')
-      .select('id, nome_arquivo, uploaded_at, total_linhas, alertas_qualidade, status')
-      .order('uploaded_at', { ascending: false })
-      .limit(50)
-
-    if (error) {
-      return jsonError('DB_ERROR', error.message, 500)
-    }
-
-    if (!uploads || uploads.length === 0) {
-      return NextResponse.json({
-        ultimoScore: null,
-        timeline: [],
-        ultimoUpload: null,
-      })
-    }
-
-    const timeline = (uploads as Upload[]).map((upload) => ({
-      uploadId: upload.id,
-      nomeArquivo: upload.nome_arquivo,
-      uploadedAt: upload.uploaded_at,
-      totalLinhas: upload.total_linhas,
-      score: calcScoreFromAlerts(upload.alertas_qualidade ?? []),
-      alertas: upload.alertas_qualidade ?? [],
-      status: upload.status,
-    }))
-
-    // Cronológico (mais antigo primeiro) sem mutar o array original
-    const cronologico = [...timeline].reverse()
+    const rows = await fetchAnoAtual(supabase)
+    const alertas = checkSyncQuality(rows)
+    const score = calcScoreFromAlerts(alertas)
 
     return NextResponse.json({
-      ultimoScore: timeline[0]?.score ?? null,
-      timeline: cronologico,
-      ultimoUpload: cronologico[cronologico.length - 1] ?? null,
+      score,
+      alertas,
+      totalVendas: new Set(rows.map((r) => r.venda_numero)).size,
+      geradoEm: new Date().toISOString(),
     })
   } catch (err) {
     console.error('Qualidade error:', err)
     return jsonError('INTERNAL_ERROR', 'Erro ao calcular qualidade.', 500)
   }
 }
-

@@ -2,10 +2,11 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { getSupabaseBrowser } from '@/lib/supabase'
 import { useSidebar } from '@/lib/sidebar-context'
 import { useAuth } from '@/hooks/useAuth'
+import type { QualityAlert } from '@/lib/schemas'
 import {
   LayoutDashboard,
   Upload,
@@ -37,6 +38,19 @@ export function Navigation() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { collapsed, toggle } = useSidebar()
   const { isAdmin } = useAuth()
+  const [qualidadeAlertCount, setQualidadeAlertCount] = useState(0)
+  const [qualidadeCritico, setQualidadeCritico] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/qualidade', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data: { alertas?: QualityAlert[] }) => {
+        const alertas = data.alertas ?? []
+        setQualidadeAlertCount(alertas.length)
+        setQualidadeCritico(alertas.some((a) => a.severidade === 'CRITICO'))
+      })
+      .catch(() => {})
+  }, [])
 
   // Não mostrar nav em páginas públicas de autenticação
   if (
@@ -86,14 +100,32 @@ export function Navigation() {
               key={item.href}
               href={item.href}
               title={collapsed ? item.label : undefined}
-              className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-lg text-sm transition-colors ${
+              className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-lg text-sm transition-colors relative ${
                 isActive(pathname, item.href)
                   ? 'bg-slate-800 text-white font-medium border-l-2 border-blue-400'
                   : 'text-slate-300 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <item.icon size={18} strokeWidth={1.75} />
-              {!collapsed && item.label}
+              <span className="relative">
+                <item.icon size={18} strokeWidth={1.75} />
+                {item.href === '/qualidade' && qualidadeAlertCount > 0 && collapsed && (
+                  <span
+                    className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${qualidadeCritico ? 'bg-red-500' : 'bg-amber-500'}`}
+                  />
+                )}
+              </span>
+              {!collapsed && (
+                <span className="flex items-center gap-2 flex-1">
+                  {item.label}
+                  {item.href === '/qualidade' && qualidadeAlertCount > 0 && (
+                    <span
+                      className={`ml-auto text-xs font-semibold px-1.5 py-0.5 rounded-full ${qualidadeCritico ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'}`}
+                    >
+                      {qualidadeAlertCount}
+                    </span>
+                  )}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
@@ -161,7 +193,16 @@ export function Navigation() {
                 }`}
               >
                 <item.icon size={18} strokeWidth={1.75} />
-                {item.label}
+                <span className="flex items-center gap-2 flex-1">
+                  {item.label}
+                  {item.href === '/qualidade' && qualidadeAlertCount > 0 && (
+                    <span
+                      className={`ml-auto text-xs font-semibold px-1.5 py-0.5 rounded-full ${qualidadeCritico ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'}`}
+                    >
+                      {qualidadeAlertCount}
+                    </span>
+                  )}
+                </span>
               </Link>
             ))}
           </nav>

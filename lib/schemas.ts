@@ -187,6 +187,12 @@ export const ALERTA_TIPOS = [
   'LINHA_NULA',
   'DUPLICATA_INTERNA',
   'SETOR_OUTROS',
+  // Alertas do monitor de qualidade do SYNC (API Monde), não do upload de Excel —
+  // ver lib/sync-quality.ts. Refletem campos que a API Monde parou de preencher.
+  'PRODUTO_NULO',
+  'FORNECEDOR_NULO',
+  'CONTRATO_SEM_OPERACAO',
+  'VENDEDOR_AUSENTE',
 ] as const
 export type AlertaTipo = (typeof ALERTA_TIPOS)[number]
 

@@ -179,6 +179,11 @@ const SCORE_WEIGHTS: Record<string, { perUnit: number; max: number }> = {
   VALOR_NEGATIVO: { perUnit: 2, max: 20 },
   LINHA_NULA: { perUnit: 1, max: 10 },
   DUPLICATA_INTERNA: { perUnit: 5, max: 20 },
+  // Alertas do monitor de sync (lib/sync-quality.ts). FORNECEDOR_NULO fica de fora
+  // de propósito — hoje nenhum card lê esse campo, então não deve derrubar o score.
+  PRODUTO_NULO: { perUnit: 3, max: 20 },
+  CONTRATO_SEM_OPERACAO: { perUnit: 2, max: 10 },
+  VENDEDOR_AUSENTE: { perUnit: 3, max: 20 },
 }
 
 /**
