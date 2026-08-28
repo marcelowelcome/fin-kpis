@@ -1,101 +1,132 @@
 /**
- * Rebuild incremental da base Monde dos últimos 3 anos, em CHUNKS resumáveis.
+ * Rebuild da base Monde dos últimos 3 anos, em CHUNKS resumáveis.
  *
- * Por quê chunked: a janela de 3 anos tem ~500 páginas / ~25 mil vendas — não cabe
- * numa única invocação (Vercel limita a 300s). Cada chamada processa um pedaço de
- * páginas a partir de um cursor (tabela sync_state) e avança; o ciclo completo se
- * espalha por vários dias. Quando termina, só reinicia após `intervalDays`.
+ * Por que chunked: a janela de 3 anos não cabe numa invocação (Vercel limita a 300s).
+ * Cada chamada processa alguns MESES a partir de um cursor (`sync_state.cursor_page`,
+ * aqui interpretado como índice de mês) e avança. Quando fecha o ciclo, só recomeça
+ * após `intervalDays`.
  *
- * Sem perda de dados: usa runMondeSync (mode 'full') que deduplica por NÚMERO DA
- * VENDA — cada chunk substitui só os números que buscou. Só insere vendas >= cutoff.
+ * Mudou em 2026-08-27: o cursor era de PÁGINAS da lista, porque o sync antigo abria
+ * venda por venda. Agora o sync lê feeds planos por janela de data, então o cursor
+ * natural é o mês. Além de mais simples, isso conserta um limite real do modelo antigo:
+ * a lista vem ordenada por `sale_date DESC`, então um cursor de páginas varria sempre a
+ * mesma faixa recente e nunca alcançava o passado de forma previsível.
  *
- * Cron sugerido: diário (vercel.json) → progride ~40 págs/dia; o ciclo completo leva
- * ~vários dias (mais que antes, pois cada venda exige uma chamada de detalhe na API de
- * Dados), depois aguarda 10 dias desde a conclusão para recomeçar.
+ * Cada mês é reconciliado por completo (apaga os números daquele mês e reinsere só as
+ * linhas ativas), então o rebuild é idempotente e corrige cancelamento retroativo.
  */
 
 import { getSupabaseServer } from './supabase'
-import { runMondeSync, type SyncRunResult } from './monde-sync-runner'
+import { runFeedSync, type FeedSyncResult } from './monde-sync-feed'
+import { janelasMensais } from './monde-feed'
 
 const STATE_KEY = 'rebuild-3y'
-// 40 págs × 50 vendas = 2.000 detalhes/execução (~200s @ 12 req/s), dentro do teto de
-// 300s do Vercel. Menor que antes (60) porque a API de Dados exige 1 detalhe por venda
-// (ver lib/monde-client): o ciclo completo leva mais dias, mas o resultado é o mesmo.
-const DEFAULT_PAGES_PER_RUN = 40
+/** Meses reconciliados por execução. 2 meses ≈ 4 janelas de feed (~25s), com folga
+ *  larga no teto de 300s do Vercel mesmo se o espelho estiver lento. */
+const DEFAULT_MONTHS_PER_RUN = 2
 const DEFAULT_INTERVAL_DAYS = 10
 const REBUILD_YEARS = 3
 
-/** Data de corte = hoje menos N anos (YYYY-MM-DD). */
-function cutoffISO(years: number): string {
+/** Primeiro dia do mês de hoje menos N anos (YYYY-MM-DD). */
+function inicioJanela(years: number): string {
   const d = new Date()
-  d.setFullYear(d.getFullYear() - years)
-  return d.toISOString().slice(0, 10)
+  d.setUTCFullYear(d.getUTCFullYear() - years)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+}
+
+function hojeISO(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export interface RebuildResult {
   status: 'skipped' | 'started' | 'progress' | 'completed'
   reason?: string
-  cursorPage: number
-  nextPage: number
-  cutoff: string
+  /** Índice do mês em que este chunk começou (1-based). */
+  cursorMes: number
+  proximoMes: number
+  totalMeses: number
+  janela: { from: string; to: string }
+  mesesProcessados: Array<{ from: string; to: string }>
   running: boolean
-  chunk?: SyncRunResult
+  chunks: FeedSyncResult[]
 }
 
 export async function runRebuildChunk(opts: {
-  pagesPerRun?: number
+  monthsPerRun?: number
   intervalDays?: number
   force?: boolean
 } = {}): Promise<RebuildResult> {
-  const pagesPerRun = opts.pagesPerRun ?? DEFAULT_PAGES_PER_RUN
+  const monthsPerRun = opts.monthsPerRun ?? DEFAULT_MONTHS_PER_RUN
   const intervalDays = opts.intervalDays ?? DEFAULT_INTERVAL_DAYS
-  const cutoff = cutoffISO(REBUILD_YEARS)
+  const from = inicioJanela(REBUILD_YEARS)
+  const to = hojeISO()
+  const meses = janelasMensais(from, to)
   const supabase = getSupabaseServer()
 
   const { data: state, error } = await supabase
     .from('sync_state').select('*').eq('key', STATE_KEY).single()
   if (error || !state) {
-    throw new Error(`sync_state indisponível — aplique supabase/migration-sync-state.sql. (${error?.message ?? 'sem linha'})`)
+    throw new Error(
+      `sync_state indisponível — aplique supabase/migration-sync-state.sql. (${error?.message ?? 'sem linha'})`,
+    )
   }
 
   let running = state.running as boolean
-  let cursorPage = state.cursor_page as number
+  let cursorMes = state.cursor_page as number
 
   // Sem ciclo em andamento: só começa um novo se o intervalo passou (ou force).
   if (!running) {
     const lastDone = state.last_done_at ? new Date(state.last_done_at).getTime() : 0
     const due = opts.force || !lastDone || (Date.now() - lastDone) >= intervalDays * 86_400_000
     if (!due) {
-      const nextDueISO = new Date(lastDone + intervalDays * 86_400_000).toISOString()
-      return { status: 'skipped', reason: `próximo ciclo após ${nextDueISO}`, cursorPage, nextPage: cursorPage, cutoff, running: false }
+      const nextDue = new Date(lastDone + intervalDays * 86_400_000).toISOString()
+      return {
+        status: 'skipped', reason: `próximo ciclo após ${nextDue}`,
+        cursorMes, proximoMes: cursorMes, totalMeses: meses.length,
+        janela: { from, to }, mesesProcessados: [], running: false, chunks: [],
+      }
     }
     running = true
-    cursorPage = 1
+    cursorMes = 1
+  }
+  if (cursorMes < 1 || cursorMes > meses.length) cursorMes = 1
+
+  // Processa até `monthsPerRun` meses a partir do cursor.
+  const fatia = meses.slice(cursorMes - 1, cursorMes - 1 + monthsPerRun)
+  const chunks: FeedSyncResult[] = []
+  for (const mes of fatia) {
+    // skipWatermark: o rebuild varre o passado e não deve mover a marca d'água do
+    // delta corrente — senão o delta acharia que já leu tudo até agora.
+    chunks.push(await runFeedSync({ mode: 'reconcile', from: mes.from, to: mes.to, skipWatermark: true }))
   }
 
-  // Processa um chunk (dedup por número da venda; insere só vendas >= cutoff).
-  const chunk = await runMondeSync({ mode: 'full', startPage: cursorPage, maxPages: pagesPerRun, cutoff })
-
-  const reachedEnd = chunk.nextPage > chunk.totalPages
-  const done = reachedEnd || chunk.reachedCutoff
+  const proximoMes = cursorMes + fatia.length
+  const done = proximoMes > meses.length
   const nowISO = new Date().toISOString()
+  const inseridas = chunks.reduce((s, c) => s + c.linhasInseridas, 0)
+  const canceladas = chunks.reduce((s, c) => s + c.canceladasVenda, 0)
 
   if (done) {
     await supabase.from('sync_state').update({
-      running: false,
-      cursor_page: 1,
-      last_done_at: nowISO,
-      note: `ciclo completo até pág ${chunk.nextPage - 1} (cutoff ${cutoff})`,
+      running: false, cursor_page: 1, last_done_at: nowISO,
+      note: `ciclo completo: ${meses.length} meses desde ${from}`,
       updated_at: nowISO,
     }).eq('key', STATE_KEY)
-    return { status: 'completed', cursorPage, nextPage: chunk.nextPage, cutoff, running: false, chunk }
+    return {
+      status: 'completed', cursorMes, proximoMes, totalMeses: meses.length,
+      janela: { from, to }, mesesProcessados: fatia, running: false, chunks,
+    }
   }
 
   await supabase.from('sync_state').update({
-    running: true,
-    cursor_page: chunk.nextPage,
-    note: `pág ${cursorPage}→${chunk.nextPage - 1}; +${chunk.salesInserted} vendas`,
+    running: true, cursor_page: proximoMes,
+    note: `mês ${cursorMes}→${proximoMes - 1} de ${meses.length}; +${inseridas} linhas, ${canceladas} cancelada(s)`,
     updated_at: nowISO,
   }).eq('key', STATE_KEY)
-  return { status: cursorPage === 1 ? 'started' : 'progress', cursorPage, nextPage: chunk.nextPage, cutoff, running: true, chunk }
+
+  return {
+    status: cursorMes === 1 ? 'started' : 'progress',
+    cursorMes, proximoMes, totalMeses: meses.length,
+    janela: { from, to }, mesesProcessados: fatia, running: true, chunks,
+  }
 }

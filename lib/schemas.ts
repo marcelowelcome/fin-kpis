@@ -188,11 +188,21 @@ export const ALERTA_TIPOS = [
   'DUPLICATA_INTERNA',
   'SETOR_OUTROS',
   // Alertas do monitor de qualidade do SYNC (API Monde), não do upload de Excel —
-  // ver lib/sync-quality.ts. Refletem campos que a API Monde parou de preencher.
+  // ver lib/sync-quality.ts.
+  //
+  // Os quatro primeiros nasceram como "problemas conhecidos" (campos que a API do Monde
+  // parou de preencher). Desde 2026-08-27 os feeds planos entregam todos resolvidos e o
+  // esperado é ZERO em cada um: agora eles funcionam como ALARME DE REGRESSÃO — se
+  // acenderem, a API voltou a omitir dado.
   'PRODUTO_NULO',
   'FORNECEDOR_NULO',
   'CONTRATO_SEM_OPERACAO',
   'VENDEDOR_AUSENTE',
+  // Alarmes de divergência banco × API, montados sobre os sinais que a equipe da API
+  // expôs em 2026-08-27 (`total` nas listagens e `synced_at` como frescor).
+  'CANCELADA_NO_BANCO',
+  'DIVERGENCIA_API',
+  'ESPELHO_ATRASADO',
 ] as const
 export type AlertaTipo = (typeof ALERTA_TIPOS)[number]
 

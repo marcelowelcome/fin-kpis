@@ -51,15 +51,15 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
 
-    // Sync INCREMENTAL (delta): só busca da API o que é novo ou mudou (valor, status,
-    // itens). É o caminho do botão "Atualizar" — não estoura o rate-limit por não
-    // rebaixar o detalhe da janela inteira. `dryRun:true` só relata, sem gravar.
+    // Sync DELTA: usa a marca d'água `synced_since` para descobrir quais MESES o
+    // espelho releu e reconcilia só esses meses (por inteiro, para venda e linha não
+    // ficarem descasadas). `dryRun:true` só relata, sem gravar.
     if (body.mode === 'delta' || body.delta) {
       const result = await runMondeSyncDelta({
-        startPage: Number(body.startPage) || 1,
-        maxPages: body.maxPages != null ? Number(body.maxPages) : undefined,
-        maxDetails: body.maxDetails != null ? Number(body.maxDetails) : undefined,
+        from: typeof body.from === 'string' ? body.from : undefined,
+        to: typeof body.to === 'string' ? body.to : undefined,
         cutoff: typeof body.cutoff === 'string' ? body.cutoff : undefined,
+        syncedSince: typeof body.syncedSince === 'string' ? body.syncedSince : undefined,
         dryRun: !!body.dryRun,
       })
       return NextResponse.json({ result })
@@ -67,8 +67,10 @@ export async function POST(request: NextRequest) {
 
     const result = await runMondeSync({
       mode: body.mode === 'full' ? 'full' : 'incremental',
-      startPage: Number(body.startPage) || 1,
-      maxPages: Number(body.maxPages) || undefined,
+      from: typeof body.from === 'string' ? body.from : undefined,
+      to: typeof body.to === 'string' ? body.to : undefined,
+      cutoff: typeof body.cutoff === 'string' ? body.cutoff : undefined,
+      dryRun: !!body.dryRun,
     })
     return NextResponse.json({ result })
   } catch (err) {

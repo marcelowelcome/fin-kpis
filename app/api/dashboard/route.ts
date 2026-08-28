@@ -235,7 +235,11 @@ async function fetchAllVendas(
       .select(COLS)
       .gte('data_venda', inicio)
       .lte('data_venda', fim)
-      .is('data_cancelamento', null) // exclui produtos cancelados (Data Cancelamento não vazio)
+      // Herança do Excel: `data_cancelamento` está vazia em TODAS as 102.950 linhas — a
+      // API nunca expôs data de cancelamento de venda (só de produto). Este filtro,
+      // sozinho, nunca excluiu nada. A exclusão real de cancelado acontece na ESCRITA:
+      // lib/monde-sync-feed.ts só grava produto `active` de venda não cancelada.
+      .is('data_cancelamento', null)
     if (vendedor) query = query.eq('vendedor', vendedor)
     const { data, error } = await query
       .order('id', { ascending: true })

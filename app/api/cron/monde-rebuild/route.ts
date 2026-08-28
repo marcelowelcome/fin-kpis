@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   try {
     const force = new URL(request.url).searchParams.get('force') === '1'
     const result = await runRebuildChunk({ force })
-    console.log(`[cron/monde-rebuild] ${result.status} — pág ${result.cursorPage}→${result.nextPage - 1} (cutoff ${result.cutoff})`)
+    console.log(`[cron/monde-rebuild] ${result.status} — mês ${result.cursorMes}→${result.proximoMes - 1} de ${result.totalMeses} (janela ${result.janela.from} → ${result.janela.to})`)
     return NextResponse.json({ ok: true, startedAt, finishedAt: new Date().toISOString(), ...result })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

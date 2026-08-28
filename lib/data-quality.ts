@@ -184,6 +184,13 @@ const SCORE_WEIGHTS: Record<string, { perUnit: number; max: number }> = {
   PRODUTO_NULO: { perUnit: 3, max: 20 },
   CONTRATO_SEM_OPERACAO: { perUnit: 2, max: 10 },
   VENDEDOR_AUSENTE: { perUnit: 3, max: 20 },
+  // Venda cancelada que continuou no banco é erro de DINHEIRO no dashboard: peso alto
+  // por unidade, porque uma só já infla o faturamento do setor.
+  CANCELADA_NO_BANCO: { perUnit: 10, max: 40 },
+  // Divergência de contagem banco × API: a quantidade é a diferença de linhas.
+  DIVERGENCIA_API: { perUnit: 1, max: 30 },
+  // Espelho atrasado não é erro nosso, mas invalida a leitura do dia.
+  ESPELHO_ATRASADO: { perUnit: 10, max: 10 },
 }
 
 /**

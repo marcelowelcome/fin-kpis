@@ -2,7 +2,9 @@
  * GET /api/cron/monde-sync
  *
  * Chamado automaticamente pelo Vercel Cron Jobs (ver vercel.json).
- * Executa sync incremental (25 páginas, ~1.250 vendas mais recentes).
+ * Executa RECONCILIAÇÃO da janela corrente (2026 → hoje) pelos feeds planos:
+ * revisita a janela inteira, então corrige cancelamento retroativo e cancelamento
+ * parcial — que o modelo antigo, limitado às páginas recentes, não alcançava.
  *
  * Segurança: verifica o header Authorization: Bearer CRON_SECRET.
  * O Vercel injeta este header automaticamente nas chamadas de cron.
@@ -29,9 +31,9 @@ export async function GET(request: NextRequest) {
   const startedAt = new Date().toISOString()
 
   try {
-    const result = await runMondeSync({ mode: 'incremental', maxPages: 25 })
+    const result = await runMondeSync({ mode: 'incremental' })
 
-    console.log(`[cron/monde-sync] OK — ${result.salesInserted} inseridas, ${result.cancelledSkipped} canceladas ignoradas, range ${result.dateRange?.min} → ${result.dateRange?.max}`)
+    console.log(`[cron/monde-sync] OK — ${result.linhasInseridas} linhas, ${result.canceladasVenda} venda(s) cancelada(s) removida(s), ${result.canceladasProduto} linha(s) de produto cancelada(s), range ${result.dateRange?.min} → ${result.dateRange?.max}`)
 
     return NextResponse.json({
       ok: true,
