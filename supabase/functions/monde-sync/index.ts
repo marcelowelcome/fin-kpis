@@ -57,6 +57,8 @@ const MONDE_DATA_URL = Deno.env.get('MONDE_DATA_URL') ??
 
 /** Teto real da API; pedir mais é rebaixado (ela informa em `page_size_maximo`). */
 const PAGE_SIZE = 200
+/** Números apagados e reinseridos por lote. Menor = menos perda se a função morrer. */
+const CHUNK_NUMEROS = 150
 const INSERT_BATCH = 500
 const DELETE_BATCH = 200
 /** Janela corrente. Datas anteriores só são tocadas por um reconcile explícito. */
@@ -67,6 +69,12 @@ const WATERMARK_KEY = 'feed-delta'
 /** Folga da marca d'água: sem ela, registro gravado no mesmo instante da leitura
  *  anterior escaparia para sempre. Reler é idempotente, então o custo é zero. */
 const WATERMARK_OVERLAP_MS = 30 * 60 * 1000
+/**
+ * Meses processados por invocação. A Edge Function é morta com IDLE_TIMEOUT aos 150s
+ * (não 300s), e ler um mês inteiro dos dois feeds custa ~10s. Dois meses por rodada
+ * deixam folga larga; o que sobrar volta na próxima, porque a marca d'água é POR MÊS.
+ */
+const MAX_MESES_POR_RUN = 2
 
 // ─── Setor ────────────────────────────────────────────────────────────────────
 // Mesma lógica de lib/setor-mapper.ts (normalizado + keywords). A versão anterior
@@ -281,6 +289,22 @@ async function paginar<R>(
 }
 
 /**
+ * Só conta os registros da janela, sem baixar nada: pede uma linha e lê o `total` do
+ * envelope. O delta usa isto para descobrir quais meses mudaram — a detecção anterior
+ * paginava os dois feeds de TODOS os meses só para ver se voltava algo, o que era o
+ * principal candidato a estourar o tempo desta função. E um estouro no meio da escrita
+ * apagava um mês inteiro (perda de agosto/2026).
+ */
+async function contar(
+  params: Record<string, string | number>,
+  apiKey: string,
+): Promise<number> {
+  const body = await feedFetch({ ...params, page: 1, page_size: 1 }, apiKey)
+  if (typeof body?.total === 'number') return body.total
+  return (body?.data ?? []).length
+}
+
+/**
  * Remove o placeholder de data que ficou sem preencher no catálogo do Monde
  * ("W - Isabela e Erick - DDMMAA"). São 16 casos em 2026 e esse texto aparece ao
  * cliente no card de Contratos. Datas REAIS ("- 05SEP26") são preservadas.
@@ -472,14 +496,51 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
+/**
+ * Remove uploads sem nenhuma venda. Faz UMA consulta agregando os upload_id ainda em
+ * uso, em vez de um COUNT por upload: a versão anterior era O(n) idas ao banco e é
+ * suspeita principal do estouro de tempo que apagou agosto/2026.
+ */
 // deno-lint-ignore no-explicit-any
 async function cleanOrphans(supabase: any, uploadIds: string[], keepId?: string): Promise<void> {
-  for (const uid of uploadIds) {
-    if (uid === keepId) continue
-    const { count } = await supabase
-      .from('vendas').select('*', { count: 'exact', head: true }).eq('upload_id', uid)
-    if ((count ?? 0) === 0) await supabase.from('uploads').delete().eq('id', uid)
+  const candidatos = uploadIds.filter((id) => id !== keepId)
+  if (candidatos.length === 0) return
+  const emUso = new Set<string>()
+  for (const lote of chunk(candidatos, 100)) {
+    const { data } = await supabase
+      .from('vendas').select('upload_id').in('upload_id', lote).limit(10000)
+    for (const r of data ?? []) if (r.upload_id) emUso.add(r.upload_id)
   }
+  const orfaos = candidatos.filter((id) => !emUso.has(id))
+  for (const lote of chunk(orfaos, 100)) {
+    await supabase.from('uploads').delete().in('id', lote)
+  }
+}
+
+// ─── Marca d'água POR MÊS ─────────────────────────────────────────────────────
+//
+// Uma marca d'água global não converge quando o trabalho não cabe numa invocação: se a
+// rodada processa 2 dos 5 meses afetados e não avança a marca, a rodada seguinte
+// detecta os MESMOS 5 e refaz os 2 primeiros para sempre. Guardando um `synced_at` por
+// mês, o mês já reconciliado deixa de ser detectado e a fila anda sozinha.
+//
+// O mapa vive em `sync_state.note` como JSON (a tabela não tem coluna própria).
+
+type MarcaPorMes = Record<string, string>
+
+function lerMarcas(note: string | null): MarcaPorMes {
+  if (!note) return {}
+  try {
+    const o = JSON.parse(note)
+    return o && typeof o === 'object' && o.meses ? o.meses as MarcaPorMes : {}
+  } catch {
+    // Antes de 2026-08-31 o campo guardava texto livre; tratar como "sem marca".
+    return {}
+  }
+}
+
+function serializarMarcas(marcas: MarcaPorMes, resumo: string): string {
+  return JSON.stringify({ resumo, meses: marcas })
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -502,166 +563,223 @@ Deno.serve(async (req) => {
   const to: string = typeof body?.to === 'string' ? body.to : new Date().toISOString().slice(0, 10)
   const dryRun = !!body?.dryRun
 
+  let uploadId = ''
+  let inserted = 0
+  let salesDeleted = 0
+
   try {
-    // ── 1. Decidir quais meses ler ──────────────────────────────────────────
     const todosMeses = janelasMensais(from, to)
+
+    // ── 1. Quais meses ler ──────────────────────────────────────────────────
     let syncedSince: string | null = null
-    let mesesLidos = todosMeses
+    let aLer = todosMeses
+    let marcas: MarcaPorMes = {}
+    let pendentes = 0
 
     if (mode === 'delta') {
       const { data: st } = await supabase
-        .from('sync_state').select('last_done_at').eq('key', WATERMARK_KEY).maybeSingle()
-      const wm = st?.last_done_at as string | null
-      if (wm) {
-        syncedSince = new Date(new Date(wm).getTime() - WATERMARK_OVERLAP_MS).toISOString()
-        // Sonda a JANELA INTEIRA de uma vez (não mês a mês): o conjunto relido é pequeno,
-        // então são ~2 requisições em vez de 24. Consulta os DOIS feeds porque a venda
-        // pode ser relida sem as linhas dela e vice-versa.
-        const relidas = await lerVendas({ from, to, syncedSince }, apiKey)
-        const relidasLinhas = await paginar<string>(
-          { resource: 'products', from, to, synced_since: syncedSince },
-          apiKey,
-          // deno-lint-ignore no-explicit-any
-          (r: any) => String(r.sale_date ?? ''),
-        )
-        const mesesComMudanca = new Set<string>()
-        for (const v of relidas) if (v.sale_date) mesesComMudanca.add(v.sale_date.slice(0, 7))
-        for (const d of relidasLinhas) if (d) mesesComMudanca.add(d.slice(0, 7))
-        mesesLidos = todosMeses.filter((m) => mesesComMudanca.has(m.from.slice(0, 7)))
+        .from('sync_state').select('last_done_at, note').eq('key', WATERMARK_KEY).maybeSingle()
+      const wmGlobal = st?.last_done_at as string | null
+      marcas = lerMarcas(st?.note as string | null)
+
+      if (wmGlobal || Object.keys(marcas).length > 0) {
+        // Só CONTAGEM (2 requisições por mês), não paginação completa.
+        const afetados: Array<{ from: string; to: string }> = []
+        for (const mes of todosMeses) {
+          const rotulo = mes.from.slice(0, 7)
+          const marcaDoMes = marcas[rotulo]
+          const base = marcaDoMes ?? wmGlobal
+          if (!base) { afetados.push(mes); continue }
+          // Mês COM marca própria já foi reconciliado inteiro: pergunta a partir de
+          // 1 ms depois da marca. Sem esse +1 ms o próprio registro que definiu a marca
+          // volta na contagem (o filtro é inclusivo) e o mês é redetectado para sempre —
+          // a fila nunca anda. Mês SEM marca usa o piso global com folga para trás,
+          // porque ali ainda pode haver registro não lido.
+          const desde = marcaDoMes
+            ? new Date(new Date(marcaDoMes).getTime() + 1).toISOString()
+            : new Date(new Date(base).getTime() - WATERMARK_OVERLAP_MS).toISOString()
+          if (!syncedSince || desde < syncedSince) syncedSince = desde
+          const [nv, nl] = await Promise.all([
+            contar({ resource: 'sales', from: mes.from, to: mes.to, synced_since: desde }, apiKey),
+            contar({ resource: 'products', from: mes.from, to: mes.to, synced_since: desde }, apiKey),
+          ])
+          if (nv > 0 || nl > 0) afetados.push(mes)
+        }
+        // Mais antigos primeiro: o atraso maior sai da fila antes.
+        afetados.sort((a, b) => a.from.localeCompare(b.from))
+        pendentes = Math.max(0, afetados.length - MAX_MESES_POR_RUN)
+        aLer = afetados.slice(0, MAX_MESES_POR_RUN)
       }
-      // Sem marca d'água: primeiro run = reconciliação completa da janela.
+      // Sem marca nenhuma: primeiro run = reconciliação completa da janela.
     }
 
-    if (mesesLidos.length === 0) {
+    if (aLer.length === 0) {
       return json({
         ok: true, startedAt, mode, from, to, syncedSince,
-        mesesLidos: 0, vendasLidas: 0, linhasLidas: 0,
+        mesesLidos: 0, mesesPulados: [], vendasLidas: 0, linhasLidas: 0,
         salesInserted: 0, salesDeleted: 0, pending: 0,
         canceladasVenda: 0, canceladasProduto: 0, semLinhaAtiva: 0,
-        nota: 'nada relido desde a última marca d\'água',
+        nota: "nada relido desde a última marca d'água",
       })
     }
 
-    // ── 2. Ler os meses afetados POR INTEIRO (sem synced_since) ─────────────
-    const vendas: FeedSale[] = []
-    const linhas: FeedLine[] = []
-    // Serializado de propósito: em paralelo, os dois feeds dobram a taxa de saída e
-    // aproximam o rate limiter do Edge Runtime sem ganho real (o gargalo é o throttle).
-    for (const mes of mesesLidos) {
-      vendas.push(...await lerVendas(mes, apiKey))
-      linhas.push(...await lerLinhas(mes, apiKey))
-    }
-
-    const maxSynced = vendas.reduce<string | null>(
-      (mx, v) => (v.synced_at && (!mx || v.synced_at > mx) ? v.synced_at : mx), null,
-    )
-
-    // ── 3. Cancelamento MANUAL (contorno de junho/2026) ─────────────────────
-    // Hoje as 7 entradas já são cobertas pela régua (produtos vêm `canceled`), mas
-    // seguimos honrando: é barato e é a única saída manual se o espelho voltar a errar.
+    // ── 2. Cancelamento MANUAL (contorno de junho/2026) ─────────────────────
     const { data: cancRows } = await supabase.from('vendas_canceladas').select('venda_numero')
     const canceladasManual = new Set(
       (cancRows ?? []).map((r: { venda_numero: number }) => r.venda_numero),
     )
 
-    // ── 4. Estado atual: carry-forward de produto + uploads afetados ────────
-    const vistosTodos = [...new Set(vendas.map((v) => v.sale_number))]
-    const produtoAnterior = new Map<number, string>()
-    const affectedUploadIds = new Set<string>()
-    let salesDeleted = 0
-
-    for (const numeros of chunk(vistosTodos, DELETE_BATCH)) {
-      const { data: rows } = await supabase
-        .from('vendas').select('venda_numero, upload_id, produto').in('venda_numero', numeros)
-      for (const r of rows ?? []) {
-        if (r.upload_id) affectedUploadIds.add(r.upload_id)
-        if (r.produto && !produtoAnterior.has(r.venda_numero)) {
-          produtoAnterior.set(r.venda_numero, r.produto)
-        }
-      }
-      salesDeleted += rows?.length ?? 0
-    }
-
-    // ── 5. Aplicar a régua ─────────────────────────────────────────────────
-    const elegiveis = vendas.filter((v) => !canceladasManual.has(v.sale_number))
-    const c = construirLinhas(elegiveis, linhas, produtoAnterior)
-    const manualIgnoradas = vendas.length - elegiveis.length
-
-    if (dryRun) {
-      return json({
-        ok: true, startedAt, mode, from, to, syncedSince, dryRun: true,
-        mesesLidos: mesesLidos.length, vendasLidas: vendas.length, linhasLidas: linhas.length,
-        salesInserted: 0, salesDeleted: 0, pending: 0,
-        linhasQueSeriamInseridas: c.linhas.length,
-        canceladasVenda: c.canceladasVenda, canceladasProduto: c.canceladasProduto,
-        semLinhaAtiva: c.semLinhaAtiva, canceladasManual: manualIgnoradas,
-      })
-    }
-
-    // ── 6. Dedup: apaga TODOS os números vistos ────────────────────────────
-    for (const numeros of chunk(vistosTodos, DELETE_BATCH)) {
-      const { error } = await supabase.from('vendas').delete().in('venda_numero', numeros)
-      if (error) throw new Error(`Erro ao apagar lote: ${error.message}`)
-    }
-
-    // ── 7. Inserir as linhas ativas ────────────────────────────────────────
-    let uploadId = ''
-    let inserted = 0
-    if (c.linhas.length > 0) {
+    // ── 3. Registro de upload ANTES de qualquer delete ──────────────────────
+    // Sem isto, uma morte entre apagar e inserir não deixa rastro nenhum — foi o que
+    // escondeu a perda de agosto/2026 até o dashboard zerar.
+    if (!dryRun) {
       const { data: up, error: upErr } = await supabase
         .from('uploads')
         .insert({
           nome_arquivo: `${FILENAME_PREFIX}${mode}-${new Date().toISOString().slice(0, 10)}`,
-          total_linhas: c.linhas.length,
-          linhas_inseridas: c.linhas.length,
-          linhas_atualizadas: salesDeleted,
-          alertas_qualidade: [],
-          status: 'success',
+          total_linhas: 0, linhas_inseridas: 0, linhas_atualizadas: 0,
+          // 'warning' = em andamento; a tabela só aceita success/warning/error.
+          alertas_qualidade: [], status: 'warning',
         })
         .select('id').single()
       if (upErr || !up) throw new Error(`Erro ao registrar sync: ${upErr?.message}`)
       uploadId = up.id
-
-      const comUpload = c.linhas.map((l) => ({ ...l, upload_id: uploadId }))
-      for (let i = 0; i < comUpload.length; i += INSERT_BATCH) {
-        const { error } = await supabase.from('vendas').insert(comUpload.slice(i, i + INSERT_BATCH))
-        if (error) {
-          await supabase.from('uploads').update({ status: 'error' }).eq('id', uploadId)
-          throw new Error(`Erro ao inserir lote ${Math.floor(i / INSERT_BATCH) + 1}: ${error.message}`)
-        }
-      }
-      inserted = comUpload.length
     }
 
-    // ── 8. Faxina e marca d'água ───────────────────────────────────────────
-    await cleanOrphans(supabase, [...affectedUploadIds], uploadId || undefined)
+    // ── 4. Um mês por vez ───────────────────────────────────────────────────
+    const mesesLidos: string[] = []
+    const mesesPulados: string[] = []
+    const affectedUploadIds = new Set<string>()
+    const todasDatas: string[] = []
+    let vendasLidas = 0, linhasLidas = 0
+    let canceladasVenda = 0, canceladasProduto = 0, semLinhaAtiva = 0, manualIgnoradas = 0
+    let maxSynced: string | null = null
 
-    if (maxSynced) {
-      const now = new Date().toISOString()
+    for (const mes of aLer) {
+      const rotulo = mes.from.slice(0, 7)
+      const [vendas, linhas] = await Promise.all([
+        lerVendas(mes, apiKey),
+        lerLinhas(mes, apiKey),
+      ])
+      vendasLidas += vendas.length
+      linhasLidas += linhas.length
+
+      // TRAVA: vendas sem NENHUMA linha de produto = falha do feed `products`. Sem ela,
+      // toda venda do mês pareceria "sem produto ativo" e seria apagada. Foi assim que
+      // agosto/2026 sumiu.
+      if (vendas.length > 0 && linhas.length === 0) { mesesPulados.push(rotulo); continue }
+      if (vendas.length === 0) continue
+
+      let maxDoMes: string | null = null
+      for (const v of vendas) {
+        if (v.synced_at && (!maxSynced || v.synced_at > maxSynced)) maxSynced = v.synced_at
+        if (v.synced_at && (!maxDoMes || v.synced_at > maxDoMes)) maxDoMes = v.synced_at
+      }
+
+      const elegiveis = vendas.filter((v) => !canceladasManual.has(v.sale_number))
+      manualIgnoradas += vendas.length - elegiveis.length
+
+      const numeros = [...new Set(vendas.map((v) => v.sale_number))]
+      const produtoAnterior = new Map<number, string>()
+      for (const lote of chunk(numeros, CHUNK_NUMEROS)) {
+        const { data: rows } = await supabase
+          .from('vendas').select('venda_numero, upload_id, produto').in('venda_numero', lote)
+        for (const r of rows ?? []) {
+          if (r.upload_id) affectedUploadIds.add(r.upload_id)
+          if (r.produto && !produtoAnterior.has(r.venda_numero)) {
+            produtoAnterior.set(r.venda_numero, r.produto)
+          }
+        }
+      }
+
+      const c = construirLinhas(elegiveis, linhas, produtoAnterior)
+      canceladasVenda += c.canceladasVenda
+      canceladasProduto += c.canceladasProduto
+      semLinhaAtiva += c.semLinhaAtiva
+      for (const l of c.linhas) todasDatas.push(l.data_venda)
+
+      if (dryRun) { mesesLidos.push(rotulo); continue }
+
+      const porVenda = new Map<number, VendaRow[]>()
+      for (const l of c.linhas) {
+        const arr = porVenda.get(l.venda_numero)
+        if (arr) arr.push(l); else porVenda.set(l.venda_numero, [l])
+      }
+
+      // Apaga e insere no MESMO lote: morte súbita perde só este lote, que a próxima
+      // rodada refaz.
+      for (const lote of chunk(numeros, CHUNK_NUMEROS)) {
+        const { error: delErr } = await supabase.from('vendas').delete().in('venda_numero', lote)
+        if (delErr) throw new Error(`Erro ao apagar lote (${rotulo}): ${delErr.message}`)
+        salesDeleted += lote.length
+
+        const novas = lote.flatMap((n) =>
+          (porVenda.get(n) ?? []).map((l) => ({ ...l, upload_id: uploadId })))
+        for (let i = 0; i < novas.length; i += INSERT_BATCH) {
+          const { error: insErr } = await supabase.from('vendas').insert(novas.slice(i, i + INSERT_BATCH))
+          if (insErr) throw new Error(`Erro ao inserir lote (${rotulo}): ${insErr.message}`)
+        }
+        inserted += novas.length
+      }
+
+      // Mês reconciliado: grava a marca dele para não ser redetectado na próxima
+      // rodada. É isto que faz a fila andar quando não cabe tudo numa invocação.
+      if (maxDoMes) marcas[rotulo] = maxDoMes
+      mesesLidos.push(rotulo)
+    }
+
+    if (dryRun) {
+      return json({
+        ok: true, startedAt, mode, from, to, syncedSince, dryRun: true,
+        mesesLidos: mesesLidos.length, mesesPulados,
+        vendasLidas, linhasLidas, salesInserted: 0, salesDeleted: 0, pending: 0,
+        canceladasVenda, canceladasProduto, semLinhaAtiva, canceladasManual: manualIgnoradas,
+      })
+    }
+
+    // ── 5. Fecha o upload, faxina e marca d'água ────────────────────────────
+    await supabase.from('uploads')
+      .update({ status: 'success', total_linhas: inserted, linhas_inseridas: inserted, linhas_atualizadas: salesDeleted })
+      .eq('id', uploadId)
+
+    await cleanOrphans(supabase, [...affectedUploadIds], uploadId)
+
+    // Grava as marcas POR MÊS dos meses efetivamente reconciliados. Mês pulado pela
+    // trava não recebe marca — continua na fila até ser lido inteiro.
+    if (mesesLidos.length > 0) {
+      const resumo = `${mode}: ${mesesLidos.join(', ')} · ${inserted} linhas · ` +
+        `${canceladasVenda} cancelada(s)` +
+        (mesesPulados.length ? ` · PULADOS: ${mesesPulados.join(', ')}` : '') +
+        (pendentes ? ` · ${pendentes} mês(es) na fila` : '')
       await supabase.from('sync_state').upsert({
         key: WATERMARK_KEY, cursor_page: 1, running: false,
-        last_done_at: maxSynced,
-        note: `${mode}: ${mesesLidos.length} mês(es), ${inserted} linhas, ${c.canceladasVenda} cancelada(s)`,
-        updated_at: now,
+        // `last_done_at` vira só o piso para mês ainda sem marca própria.
+        last_done_at: maxSynced ?? null,
+        note: serializarMarcas(marcas, resumo),
+        updated_at: new Date().toISOString(),
       }, { onConflict: 'key' })
     }
 
-    const datas = c.linhas.map((l) => l.data_venda).filter(Boolean).sort()
-
+    const datas = todasDatas.sort()
     return json({
       ok: true, startedAt, finishedAt: new Date().toISOString(),
       mode, from, to, syncedSince,
-      mesesLidos: mesesLidos.length,
-      vendasLidas: vendas.length, linhasLidas: linhas.length,
-      salesInserted: inserted, salesDeleted, pending: 0,
-      canceladasVenda: c.canceladasVenda, canceladasProduto: c.canceladasProduto,
-      semLinhaAtiva: c.semLinhaAtiva, canceladasManual: manualIgnoradas,
+      mesesLidos: mesesLidos.length, mesesPulados,
+      vendasLidas, linhasLidas,
+      salesInserted: inserted, salesDeleted, pending: pendentes,
+      canceladasVenda, canceladasProduto, semLinhaAtiva, canceladasManual: manualIgnoradas,
       watermark: maxSynced,
       dateRange: datas.length ? { min: datas[0], max: datas[datas.length - 1] } : null,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[monde-sync] ERRO:', msg)
-    return json({ ok: false, startedAt, error: msg }, 500)
+    // Deixa o rastro: o registro fica como 'error' com o que chegou a ser gravado.
+    if (uploadId) {
+      await supabase.from('uploads')
+        .update({ status: 'error', total_linhas: inserted, linhas_inseridas: inserted, linhas_atualizadas: salesDeleted })
+        .eq('id', uploadId)
+    }
+    return json({ ok: false, startedAt, error: msg, salesInserted: inserted, salesDeleted }, 500)
   }
 })

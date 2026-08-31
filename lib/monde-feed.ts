@@ -302,6 +302,33 @@ export function janelasMensais(from: string, to: string): Array<{ from: string; 
   return out
 }
 
+/**
+ * Só conta quantos registros a janela tem, sem baixar nada. Pede uma linha e lê o
+ * `total` do envelope (os dois feeds passaram a devolvê-lo em 2026-08-27).
+ *
+ * Existe para o delta descobrir QUAIS MESES mudaram sem paginar cada mês inteiro: a
+ * detecção antiga baixava os dois feeds de todos os meses só para ver se voltava algo,
+ * o que dobrava as requisições e era o principal candidato a estourar o tempo da Edge
+ * Function — e um estouro no meio da escrita apagava um mês inteiro (2026-08-31).
+ */
+async function contar(params: Record<string, string | number>): Promise<number> {
+  const body = await feedFetch<unknown>({ ...params, page: 1, page_size: 1 })
+  if (typeof body.total === 'number') return body.total
+  return (body.data ?? []).length
+}
+
+export async function contarVendas(w: FeedWindow): Promise<number> {
+  const p: Record<string, string | number> = { resource: 'sales', from: w.from, to: w.to }
+  if (w.syncedSince) p.synced_since = w.syncedSince
+  return contar(p)
+}
+
+export async function contarLinhas(w: FeedWindow): Promise<number> {
+  const p: Record<string, string | number> = { resource: 'products', from: w.from, to: w.to }
+  if (w.syncedSince) p.synced_since = w.syncedSince
+  return contar(p)
+}
+
 export async function lerVendas(w: FeedWindow): Promise<FeedSale[]> {
   const p: Record<string, string | number> = { resource: 'sales', from: w.from, to: w.to }
   if (w.syncedSince) p.synced_since = w.syncedSince
