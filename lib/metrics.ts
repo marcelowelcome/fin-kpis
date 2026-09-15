@@ -115,8 +115,22 @@ export function calcDashboard(
     prorratedMetaBySetor.set(key, prev + m.fat_meta * factor)
   }
 
+  // "Acumulado 2026": a meta EXIBIDA (não só o ritmo) tem que ser a meta ANUAL cheia
+  // (jan-dez), não a fatia prorateada até hoje — senão a barra de progresso e o %
+  // no topo do card comparam contra um alvo que já nasce "cortado" no dia de hoje,
+  // fazendo o card sempre parecer perto de 100% e escondendo o quanto falta pro ano.
+  // opts.forecastOverride já traz essa meta cheia (é o que também alimenta o ritmo).
+  const metaAnualBySetor = new Map<string, number>()
+  if (opts?.forecastOverride) {
+    for (const m of opts.forecastOverride.metas) {
+      const key = m.setor_grupo as string
+      metaAnualBySetor.set(key, (metaAnualBySetor.get(key) ?? 0) + m.fat_meta)
+    }
+  }
+  const metaBasisBySetor = opts?.forecastOverride ? metaAnualBySetor : prorratedMetaBySetor
+
   const getMeta = (setor: SetorMeta): number => {
-    return prorratedMetaBySetor.get(setor) ?? 0
+    return metaBasisBySetor.get(setor) ?? 0
   }
   const getReceitaPct = (setor: SetorMeta): number => {
     const meta = metas.find((m) => m.setor_grupo === setor)
@@ -137,7 +151,7 @@ export function calcDashboard(
     ...calcSetorKPI(vendas, getMeta('WEDDINGS'), 'WEDDINGS', getReceitaPct('WEDDINGS'), useReceita),
     nContratos: contratosDetalhes.length,
     contratosDetalhes,
-    subcategorias: calcWeddingsSubcategorias(vendas, prorratedMetaBySetor, metasRawArr),
+    subcategorias: calcWeddingsSubcategorias(vendas, metaBasisBySetor, metasRawArr),
   }
 
   const wtMeta = opts?.wtMetaDireta
