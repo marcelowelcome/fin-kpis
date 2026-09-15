@@ -43,6 +43,10 @@
  *                          então uma venda viva pareceria "sem produto ativo" e seria
  *                          apagada por engano.
  *   reconcile           — varre a janela inteira por data. É o que garante o número.
+ *   rebuild             — reconcile dos últimos 3 anos, em chunks de 2 meses por
+ *                          invocação, via cursor em `sync_state['rebuild-3y']`.
+ *                          Agendado 1x/dia (pg_cron) — é o "gatilho" que detecta e
+ *                          autocorrige sozinho qualquer mês que fique para trás.
  *
  * Secrets (Supabase → Edge Functions → Secrets):
  *   MONDE_DATA_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
@@ -75,6 +79,21 @@ const WATERMARK_OVERLAP_MS = 30 * 60 * 1000
  * deixam folga larga; o que sobrar volta na próxima, porque a marca d'água é POR MÊS.
  */
 const MAX_MESES_POR_RUN = 2
+
+/**
+ * Modo `rebuild`: varre os últimos 3 anos em chunks resumáveis, mês a mês, via cursor
+ * em `sync_state` (chave própria, `skipWatermark=true` — nunca mexe na marca d'água
+ * do delta). Substitui o antigo rebuild via Vercel Cron (lib/monde-rebuild.ts +
+ * /api/cron/monde-rebuild): confirmado ao vivo em 2026-09-15 que aquela rota nunca
+ * foi disparada em produção (cursor parado em 1 desde a migração, 2026-08-27) — foi
+ * assim que março e maio/2026 ficaram com 17 e 0 linhas por semanas sem ninguém
+ * notar. pg_cron→Edge Function é o único caminho comprovadamente confiável neste
+ * projeto (é o que já roda o delta 3x/dia).
+ */
+const REBUILD_STATE_KEY = 'rebuild-3y'
+const REBUILD_MONTHS_PER_RUN = 2
+const REBUILD_INTERVAL_DAYS = 10
+const REBUILD_YEARS = 3
 
 // ─── Setor ────────────────────────────────────────────────────────────────────
 // Mesma lógica de lib/setor-mapper.ts (normalizado + keywords). A versão anterior
@@ -558,10 +577,22 @@ Deno.serve(async (req) => {
 
   const startedAt = new Date().toISOString()
   const body = await req.json().catch(() => ({}))
-  const mode: 'delta' | 'reconcile' = body?.mode === 'reconcile' ? 'reconcile' : 'delta'
-  const from: string = typeof body?.from === 'string' ? body.from : CUTOFF
-  const to: string = typeof body?.to === 'string' ? body.to : new Date().toISOString().slice(0, 10)
+  const mode: 'delta' | 'reconcile' | 'rebuild' =
+    body?.mode === 'reconcile' ? 'reconcile' : body?.mode === 'rebuild' ? 'rebuild' : 'delta'
+  const hojeStr = new Date().toISOString().slice(0, 10)
+  function inicioJanelaRebuild(): string {
+    const d = new Date()
+    d.setUTCFullYear(d.getUTCFullYear() - REBUILD_YEARS)
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+  }
+  const from: string = mode === 'rebuild'
+    ? inicioJanelaRebuild()
+    : typeof body?.from === 'string' ? body.from : CUTOFF
+  const to: string = mode === 'rebuild' ? hojeStr : typeof body?.to === 'string' ? body.to : hojeStr
   const dryRun = !!body?.dryRun
+  // rebuild varre o PASSADO em background — nunca deve mexer na marca d'água do
+  // delta corrente, senão o delta acharia que já releu tudo até agora.
+  const skipWatermark = mode === 'rebuild'
 
   let uploadId = ''
   let inserted = 0
@@ -575,6 +606,35 @@ Deno.serve(async (req) => {
     let aLer = todosMeses
     let marcas: MarcaPorMes = {}
     let pendentes = 0
+    let rebuild: { cursorMes: number; proximoMes: number; totalMeses: number; status: string } | null = null
+
+    if (mode === 'rebuild') {
+      const { data: st } = await supabase
+        .from('sync_state').select('cursor_page, running, last_done_at')
+        .eq('key', REBUILD_STATE_KEY).maybeSingle()
+      let running = (st?.running as boolean) ?? false
+      let cursorMes = (st?.cursor_page as number) ?? 1
+      const force = !!body?.force
+      if (!running) {
+        const lastDone = st?.last_done_at ? new Date(st.last_done_at as string).getTime() : 0
+        const due = force || !lastDone || (Date.now() - lastDone) >= REBUILD_INTERVAL_DAYS * 86_400_000
+        if (!due) {
+          const proximoCiclo = new Date(lastDone + REBUILD_INTERVAL_DAYS * 86_400_000).toISOString()
+          return json({
+            ok: true, startedAt, mode, from, to,
+            rebuild: { status: 'skipped', reason: `próximo ciclo após ${proximoCiclo}`, cursorMes, totalMeses: todosMeses.length },
+          })
+        }
+        running = true
+        cursorMes = 1
+      }
+      if (cursorMes < 1 || cursorMes > todosMeses.length) cursorMes = 1
+      aLer = todosMeses.slice(cursorMes - 1, cursorMes - 1 + REBUILD_MONTHS_PER_RUN)
+      rebuild = {
+        cursorMes, proximoMes: cursorMes + aLer.length, totalMeses: todosMeses.length,
+        status: cursorMes === 1 ? 'started' : 'progress',
+      }
+    }
 
     if (mode === 'delta') {
       const { data: st } = await supabase
@@ -745,8 +805,9 @@ Deno.serve(async (req) => {
     await cleanOrphans(supabase, [...affectedUploadIds], uploadId)
 
     // Grava as marcas POR MÊS dos meses efetivamente reconciliados. Mês pulado pela
-    // trava não recebe marca — continua na fila até ser lido inteiro.
-    if (mesesLidos.length > 0) {
+    // trava não recebe marca — continua na fila até ser lido inteiro. Nunca roda em
+    // modo rebuild: ele varre o passado e não pode mexer na marca d'água do delta.
+    if (!skipWatermark && mesesLidos.length > 0) {
       const resumo = `${mode}: ${mesesLidos.join(', ')} · ${inserted} linhas · ` +
         `${canceladasVenda} cancelada(s)` +
         (mesesPulados.length ? ` · PULADOS: ${mesesPulados.join(', ')}` : '') +
@@ -760,6 +821,28 @@ Deno.serve(async (req) => {
       }, { onConflict: 'key' })
     }
 
+    // Avança o cursor do rebuild (chave própria, ver constantes REBUILD_*). Roda
+    // mesmo se algum mês da fatia caiu na trava (semLinhaAtiva) — sem isso, um mês
+    // com falha temporária do feed products travaria o cursor para sempre.
+    if (mode === 'rebuild' && rebuild) {
+      const nowISO = new Date().toISOString()
+      const done = rebuild.proximoMes > rebuild.totalMeses
+      if (done) {
+        await supabase.from('sync_state').update({
+          running: false, cursor_page: 1, last_done_at: nowISO,
+          note: `ciclo completo: ${rebuild.totalMeses} meses desde ${from}`,
+          updated_at: nowISO,
+        }).eq('key', REBUILD_STATE_KEY)
+        rebuild.status = 'completed'
+      } else {
+        await supabase.from('sync_state').update({
+          running: true, cursor_page: rebuild.proximoMes,
+          note: `mês ${rebuild.cursorMes}→${rebuild.proximoMes - 1} de ${rebuild.totalMeses}; +${inserted} linhas, ${canceladasVenda} cancelada(s)`,
+          updated_at: nowISO,
+        }).eq('key', REBUILD_STATE_KEY)
+      }
+    }
+
     const datas = todasDatas.sort()
     return json({
       ok: true, startedAt, finishedAt: new Date().toISOString(),
@@ -770,6 +853,7 @@ Deno.serve(async (req) => {
       canceladasVenda, canceladasProduto, semLinhaAtiva, canceladasManual: manualIgnoradas,
       watermark: maxSynced,
       dateRange: datas.length ? { min: datas[0], max: datas[datas.length - 1] } : null,
+      rebuild,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

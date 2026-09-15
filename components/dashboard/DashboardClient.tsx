@@ -12,6 +12,7 @@ import { GroupEvolutionChart } from '@/components/dashboard/GroupEvolutionChart'
 import { TopProdutos } from '@/components/dashboard/TopProdutos'
 import { ExportButton } from '@/components/dashboard/ExportButton'
 import { SyncButton } from '@/components/dashboard/SyncButton'
+import { SyncHealthBadge } from '@/components/dashboard/SyncHealthBadge'
 import { ContratosPopover, ContratosCard } from '@/components/dashboard/ContratosPopover'
 import { TaxasPopover } from '@/components/dashboard/TaxasPopover'
 import { formatBRL, formatDateTime } from '@/lib/format'
@@ -201,6 +202,7 @@ export function DashboardClient() {
                   Atualizado {formatDateTime(data.ultimaAtualizacao)}
                 </p>
               )}
+              <SyncHealthBadge />
             </div>
           </div>
           <div className="flex items-center gap-2">
