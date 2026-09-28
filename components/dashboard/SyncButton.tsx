@@ -13,27 +13,24 @@ interface Feedback {
   message: string
 }
 
-// O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API de
-// Dados do Monde (MONDE_DATA_API_KEY) e já roda 3x/dia via pg_cron. O botão chama essa
-// função DIRETO, e não /api/monde/sync no Vercel — aquela rota falha porque a
-// MONDE_DATA_API_KEY não está setada na conta Vercel do projeto.
+// O sync roda 100% no Supabase: a Edge Function `monde-sync` tem a chave da API oficial
+// do Monde (secret MONDE_V3_API_KEY, que abre o financeiro inteiro e por isso nunca vem
+// para o navegador) e roda a cada 5 min via pg_cron. O botão só dispara uma rodada extra.
 //
-// A função é INCREMENTAL: varre só a lista (barata) das páginas mais recentes e busca
-// o detalhe APENAS das vendas novas ou alteradas (valor/status/itens). Isso mantém o nº
-// de requisições de saída baixo — antes ela buscava o detalhe de ~1.000 vendas e batia
-// no rate-limiter de saída do Edge Runtime ("Rate limit exceeded… Retry after ~56s").
+// A função é INCREMENTAL: lê a página 1 da lista do Monde (venda nova aparece já) e
+// abre o detalhe só das vendas novas ou alteradas, uma a cada 1,3 s. `pending` > 0 é
+// venda nova/alterada que não coube na rodada — vem no próximo clique ou cron.
 // A anon key é pública (já vai no bundle do dashboard), então usá-la no client é seguro.
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const SYNC_ENDPOINT = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/monde-sync`
 // Limite no cliente para o fetch não ficar pendurado para sempre se o servidor travar.
-// 180s para acomodar o pior caso da Edge (varredura de 20 páginas + backoff de retry
-// quando o Monde dá throttling), evitando um "tempo esgotado" enganoso enquanto o sync
-// ainda conclui no servidor (que é idempotente — dedup por número da venda).
+// A Edge encerra cada rodada em ~115 s; 180 s evita um "tempo esgotado" enganoso
+// enquanto o sync ainda conclui no servidor (que é idempotente — dedup por número).
 const FETCH_TIMEOUT_MS = 180_000
 
 /**
  * Botão de atualização manual: dispara a Edge Function `monde-sync` do Supabase
- * (varre as páginas mais recentes da API Monde) e recarrega o dashboard ao concluir.
+ * (lê a API oficial do Monde) e recarrega o dashboard ao concluir.
  * A janela completa de backfill continua em /upload (MondeSyncSection).
  */
 export function SyncButton({ onSynced }: SyncButtonProps) {
@@ -78,13 +75,14 @@ export function SyncButton({ onSynced }: SyncButtonProps) {
         return
       }
 
-      // A Edge Function é incremental: só busca da API o que é novo ou mudou. `pending`
-      // > 0 significa que o runtime limitou o nº de buscas neste ciclo (ex.: muitas
-      // mudanças de uma vez) e o resto vem no próximo clique/cron — avisamos o usuário.
+      // `pending` > 0: vendas novas/alteradas que não couberam nesta rodada.
+      // `emAndamento`: o cron já estava rodando; o dado chega em instantes.
       const inserted = data?.salesInserted ?? 0
       const pending = data?.pending ?? 0
       const message =
-        pending > 0
+        data?.emAndamento
+          ? 'Sincronização já em andamento — atualize em 2 min'
+          : pending > 0
           ? `${inserted.toLocaleString('pt-BR')} atualizadas · ${pending.toLocaleString('pt-BR')} pendentes — clique de novo`
           : inserted > 0
             ? `${inserted.toLocaleString('pt-BR')} ${inserted === 1 ? 'venda atualizada' : 'vendas atualizadas'}`

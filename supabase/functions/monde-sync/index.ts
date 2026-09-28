@@ -1,104 +1,96 @@
 /**
  * Supabase Edge Function: monde-sync
  *
- * Sincroniza a **API de Dados do Monde** (espelho somente-leitura) → tabela `vendas`.
- * Roda 100% no Supabase (o Vercel não tem a MONDE_DATA_API_KEY), acionada pelo pg_cron
- * e pelo botão "Atualizar" do dashboard.
+ * Sincroniza a **API oficial do Monde (v3)** → tabela `vendas`. Roda 100% no Supabase,
+ * acionada pelo pg_cron (a cada 5 min) e pelo botão "Atualizar" do dashboard.
  *
- * ── Por que este arquivo foi reescrito (2026-08-27) ─────────────────────────────
- * A versão anterior lia `resource=sales` (lista) + `resource=sale&id=…` (detalhe) e
- * mapeava o bloco `raw`, que é o objeto cru do Monde. Todo bug de sync de 2026 nasceu
- * dali, porque o Monde reescreve o `raw` sem avisar:
- *   2026-08-05  `product_name` sumiu de others/operations   → produto = null
- *   2026-08-13  `totals.final_value` → `final_amount`       → valor_total = 0
- *   2026-08-13  `custom_fields` perdeu `name`               → setor_bruto = null
- *   2026-08-13  `travel_agent` sumiu                        → "Sem vendedor"
- *   2026-08-14  `approver` sumiu                            → operacao = null (13 dias)
- * E era estruturalmente cego a dois erros de dinheiro:
- *   • VENDA CANCELADA ficava somada para sempre — a listagem sem `from`/`to` não
- *     devolve venda cancelada, então o delta nunca a revisitava para apagá-la.
- *     Medido em 2026-08-27: 17 vendas, R$ 45.079,69 de valor / R$ 15.765,93 de receita.
- *   • CANCELAMENTO PARCIAL era matematicamente invisível: o delta comparava o
- *     `total_final_value` da lista (BRUTO, inclui produto cancelado) com o `valor_total`
- *     gravado (LÍQUIDO). Em 264/264 vendas de 2026 com produto cancelado o bruto não se
- *     move ao cancelar um produto, então a checagem não podia funcionar.
+ * ── Por que este arquivo foi reescrito (2026-09-28) ─────────────────────────────
+ * Até aqui o sync lia a API de Dados do TTARS (monde-data), um espelho que entregava
+ * feeds planos por data, com nomes já resolvidos. Ela desliga em 02/10/2026 (HTTP 410).
+ * O Monde v3 direto é bem mais pobre, e o desenho abaixo existe por causa disso:
+ *   • GET /sales NÃO filtra por data nem por número (period_start/end são ignorados
+ *     calados). Vem inteira, da mais nova para a mais velha, 50 por página, sem total.
+ *   • Venda cancelada só vem com status=opened,closed,canceled.
+ *   • Produto, Setor, pagante e vendedor só existem em /sales/{id} (o UUID, não o
+ *     número) — uma chamada por venda. E vêm só como {id}: o nome está em
+ *     /people/{id}, /products/{id} e /custom_fields.
+ *   • Limite prático de 1 chamada a cada 1,3 s; 429 = esperar e repetir.
+ * 2026 tem ~6 mil vendas: abrir todas é ~2 h de chamadas. Então nada é lido "na hora":
  *
- * Agora usamos DOIS FEEDS PLANOS, com nomes de campo estáveis e valores já resolvidos:
- *   `resource=sales`    → nível VENDA:  status, Setor, vendedor, pagante, receita, casal
- *   `resource=products` → nível LINHA:  product_status, produto, fornecedor, valor
- * Nenhum basta sozinho (`products` não tem receita/setor/vendedor/pagante; `sales` não
- * tem status por produto). A junção é por `sale_number`. Zero chamada de detalhe.
+ *   1. LISTA (barata) → tabela `monde_v3_vendas`, o índice. Cada rodada lê a página 1
+ *      (venda nova aparece em minutos) e avança um ciclo que desce a lista até 3 anos
+ *      atrás. Mudou status/data/totais → a venda entra na fila com prioridade 0.
+ *      Cancelada → sai de `vendas` na hora, sem abrir o detalhe.
+ *   2. DETALHE (caro) → fila por `refresh_at`/`prioridade`: nova/alterada primeiro,
+ *      depois a carga inicial de 2026, depois a revisão periódica (é ela que pega
+ *      cancelamento PARCIAL, que não mexe nos totais da lista).
+ *   3. NOMES → cache em `monde_v3_nomes`; cada id novo custa uma chamada, uma vez.
  *
- * ── Régua de soma (a mesma do relatório do Monde) ──────────────────────────────
- *   1. fora as vendas com `sale_status = 'canceled'`;
- *   2. nas que sobram, somar SÓ as linhas com `product_status = 'active'`.
- * `canceled_at` NÃO serve de sinal: vem vazio nas linhas `deleted` e nas vendas
- * canceladas por inteiro. Só `status` decide.
+ * Cada rodada tem orçamento de ~110 s (a função morre aos 150 s) e para de pedir antes
+ * disso; o que sobrar fica na fila para a próxima.
  *
- * ── Modos ─────────────────────────────────────────────────────────────────────
- *   delta      (default) — usa `synced_since` (marca d'água em `sync_state`) para
- *                          descobrir QUAIS MESES tiveram releitura e lê esses meses
- *                          POR INTEIRO. Ler o mês inteiro é deliberado: em delta puro a
- *                          venda pode vir relida sem as linhas dela (ou o contrário), e
- *                          então uma venda viva pareceria "sem produto ativo" e seria
- *                          apagada por engano.
- *   reconcile           — varre a janela inteira por data. É o que garante o número.
- *   rebuild             — reconcile dos últimos 3 anos, em chunks de 2 meses por
- *                          invocação, via cursor em `sync_state['rebuild-3y']`.
- *                          Agendado 1x/dia (pg_cron) — é o "gatilho" que detecta e
- *                          autocorrige sozinho qualquer mês que fique para trás.
+ * ── Régua de soma (inalterada, a mesma do relatório do Monde) ─────────────────────
+ *   1. fora a venda com status 'canceled';
+ *   2. nas que sobram, só produto com status 'active' entra (valor = totals.amount).
+ *   Receita = totals.revenue da venda, rateada entre as linhas ativas pelo valor.
+ *
+ * ── Modos (body JSON) ─────────────────────────────────────────────────────────
+ *   {}                       sync normal (cron e botão)
+ *   { mode: 'probe' }        diagnóstico da chave: status HTTP de cada recurso usado.
+ *   { mode: 'compare', sale_ids: [...] }  lê as vendas e devolve o que o sync gravaria.
+ *   probe e compare devolvem dado de venda, então exigem a service role no Authorization
+ *   (a anon key é pública, vai no bundle do dashboard).
  *
  * Secrets (Supabase → Edge Functions → Secrets):
- *   MONDE_DATA_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+ *   MONDE_V3_API_KEY  token Basic JÁ codificado (base64 de login:senha). Abre o Monde
+ *                     inteiro, inclusive o financeiro: só aqui, nunca no front/repo/log.
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (injetados pelo Supabase).
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
-const MONDE_DATA_URL = Deno.env.get('MONDE_DATA_URL') ??
-  'https://szyrzxvlptqqheizyrxu.supabase.co/functions/v1/monde-data'
-
-/** Teto real da API; pedir mais é rebaixado (ela informa em `page_size_maximo`). */
-const PAGE_SIZE = 200
-/** Números apagados e reinseridos por lote. Menor = menos perda se a função morrer. */
-const CHUNK_NUMEROS = 150
-const INSERT_BATCH = 500
-const DELETE_BATCH = 200
-/** Janela corrente. Datas anteriores só são tocadas por um reconcile explícito. */
+const MONDE_BASE = 'https://web.monde.com.br/api/v3'
+/** Intervalo entre chamadas ao Monde. Rajadas de 2–4/s levaram 429 nos testes; 1,3 s não. */
+const GAP_MS = 1300
+/** Tempo de trabalho por rodada. A função é morta aos 150 s. */
+const ORCAMENTO_MS = 110_000
+/** Folga mínima para começar uma venda nova (detalhe + alguns nomes). */
+const FOLGA_DETALHE_MS = 12_000
+/** Páginas da lista por rodada durante um ciclo (cada uma ~1,3 s). */
+const LISTA_PAGINAS_POR_RODADA = 40
+/** Tempo reservado ao detalhe mesmo com ciclo de lista em andamento. */
+const RESERVA_DETALHE_MS = 35_000
+/** Intervalo entre ciclos completos da lista (a página 1 é lida em toda rodada). */
+const CICLO_LISTA_HORAS = 6
+/** Até onde a lista é descida: mesmo horizonte do antigo rebuild de 3 anos. */
+const LISTA_ANOS = 3
+/** Janela "corrente": revisão mais frequente e carga inicial completa. */
 const CUTOFF = '2026-01-01'
+const LOCK_VENCIDO_MS = 4 * 60_000
+const INSERT_BATCH = 500
 const FILENAME_PREFIX = 'monde-api-'
-/** Chave em `sync_state` com a marca d'água do `synced_since`. */
-const WATERMARK_KEY = 'feed-delta'
-/** Folga da marca d'água: sem ela, registro gravado no mesmo instante da leitura
- *  anterior escaparia para sempre. Reler é idempotente, então o custo é zero. */
-const WATERMARK_OVERLAP_MS = 30 * 60 * 1000
-/**
- * Meses processados por invocação. A Edge Function é morta com IDLE_TIMEOUT aos 150s
- * (não 300s), e ler um mês inteiro dos dois feeds custa ~10s. Dois meses por rodada
- * deixam folga larga; o que sobrar volta na próxima, porque a marca d'água é POR MÊS.
- */
-const MAX_MESES_POR_RUN = 2
 
-/**
- * Modo `rebuild`: varre os últimos 3 anos em chunks resumáveis, mês a mês, via cursor
- * em `sync_state` (chave própria, `skipWatermark=true` — nunca mexe na marca d'água
- * do delta). Substitui o antigo rebuild via Vercel Cron (lib/monde-rebuild.ts +
- * /api/cron/monde-rebuild): confirmado ao vivo em 2026-09-15 que aquela rota nunca
- * foi disparada em produção (cursor parado em 1 desde a migração, 2026-08-27) — foi
- * assim que março e maio/2026 ficaram com 17 e 0 linhas por semanas sem ninguém
- * notar. pg_cron→Edge Function é o único caminho comprovadamente confiável neste
- * projeto (é o que já roda o delta 3x/dia).
- */
-const REBUILD_STATE_KEY = 'rebuild-3y'
-const REBUILD_MONTHS_PER_RUN = 2
-const REBUILD_INTERVAL_DAYS = 10
-const REBUILD_YEARS = 3
+const KINDS = [
+  'hotels', 'airline_tickets', 'insurances', 'cruises', 'car_rentals',
+  'ground_transportations', 'train_tickets', 'travel_packages', 'others',
+  'operations', 'cvc_packages', 'excursions',
+] as const
 
-// ─── Setor ────────────────────────────────────────────────────────────────────
-// Mesma lógica de lib/setor-mapper.ts (normalizado + keywords). A versão anterior
-// desta função usava um mapa com match EXATO e sensível a caixa, que divergia do
-// dashboard: "corporativo" minúsculo caía em INDEFINIDO aqui e em CORP lá.
+/** kind → rótulo de produto, quando o produto não tem {id} de catálogo. */
+const KIND_PRODUTO: Record<string, string> = {
+  hotels: 'Diárias de Hospedagem',
+  airline_tickets: 'Passagem Aérea',
+  insurances: 'Seguro Viagem',
+  ground_transportations: 'Transporte Rodoviario',
+  car_rentals: 'Locação de Carro',
+  cruises: 'Cruzeiro',
+  train_tickets: 'Trem',
+  travel_packages: 'Pacote de Viagem',
+}
+
+// ─── Setor (mesma lógica de lib/setor-mapper.ts) ─────────────────────────────
 
 const SETOR_MAP_EXATO: Record<string, string> = {
   corporativo: 'CORP', corp: 'CORP',
@@ -127,44 +119,254 @@ function mapSetor(bruto: string | null | undefined): string {
 }
 
 /**
- * kind estruturado → rótulo de produto.
- * CONTINUA NECESSÁRIO: `product_name_resolvido` é nulo em 100% das linhas de
- * hospedagem, aéreo, seguro, locação e pacote — o Monde só manda código de catálogo em
- * `others`/`operations`, e a origem não tem o dado. Usar só os campos `_resolvido`
- * zeraria o rótulo de ~79% das linhas.
+ * Remove o placeholder de data que ficou sem preencher no catálogo do Monde
+ * ("W - Isabela e Erick - DDMMAA"). Datas REAIS ("- 05SEP26") são preservadas.
  */
-const KIND_PRODUTO: Record<string, string> = {
-  hotels: 'Diárias de Hospedagem',
-  airline_tickets: 'Passagem Aérea',
-  insurances: 'Seguro Viagem',
-  ground_transportations: 'Transporte Rodoviario',
-  car_rentals: 'Locação de Carro',
-  cruises: 'Cruzeiro',
-  train_tickets: 'Trem',
-  travel_packages: 'Pacote de Viagem',
+function limparOperacao(nome: string | null | undefined): string | null {
+  if (!nome) return null
+  const limpo = nome.replace(/\s*-\s*DDMMAA\s*$/i, '').trim()
+  return limpo || null
 }
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
+// ─── Utilidades ───────────────────────────────────────────────────────────────
 
-interface FeedSale {
-  sale_number: number
-  sale_date: string
-  status: string
-  setor_bruto: string | null
-  vendedor: string | null
-  pagante: string | null
-  operacao: string | null
-  receita: number
-  synced_at: string | null
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms))
 }
 
-interface FeedLine {
-  sale_number: number
-  product_status: string
-  produto: string | null
-  fornecedor: string | null
-  valor: number
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
 }
+
+function num(v: unknown): number {
+  const n = Number(v ?? 0)
+  return Number.isFinite(n) ? n : 0
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+function inicioLista(): string {
+  const d = new Date()
+  d.setUTCFullYear(d.getUTCFullYear() - LISTA_ANOS)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+}
+
+/** Próxima revisão do detalhe, com ±20% de espalhamento para não empilhar a fila. */
+function proximaRevisao(status: string, saleDate: string, agora = Date.now()): string {
+  const dias = status === 'canceled' ? 180
+    : saleDate >= CUTOFF ? (status === 'opened' ? 2 : 7)
+    : 45
+  const jitter = 0.8 + Math.random() * 0.4
+  return new Date(agora + dias * jitter * 86_400_000).toISOString()
+}
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
+// ─── Cliente do Monde ─────────────────────────────────────────────────────────
+
+class MondeErro extends Error {
+  constructor(public status: number, msg: string) { super(msg) }
+}
+
+/**
+ * Um cliente por rodada: guarda o instante da última chamada (espaçamento de 1,3 s) e
+ * o prazo da rodada. A chave nunca entra em mensagem de erro nem em log.
+ */
+class Monde {
+  private ultima = 0
+  chamadas = 0
+  constructor(private token: string, readonly prazo: number) {}
+
+  resta(): number {
+    return this.prazo - Date.now()
+  }
+
+  // deno-lint-ignore no-explicit-any
+  async get(path: string, params: Record<string, string | number> = {}): Promise<any | null> {
+    const url = new URL(MONDE_BASE + path)
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
+    const headers = {
+      // O secret JÁ é o base64 de login:senha — não codificar de novo.
+      Authorization: `Basic ${this.token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }
+
+    let ultimoErro = ''
+    for (let tentativa = 0; tentativa < 6; tentativa++) {
+      // Trava dura: nunca passar do prazo + 20 s (a função morre aos 150 s).
+      if (Date.now() > this.prazo + 20_000) throw new MondeErro(0, 'orçamento de tempo esgotado')
+      const espera = this.ultima + GAP_MS - Date.now()
+      if (espera > 0) await sleep(espera)
+      this.ultima = Date.now()
+      this.chamadas++
+
+      let res: Response
+      try {
+        res = await fetch(url.toString(), { headers })
+      } catch (e) {
+        // Rede ou limite de saída do Edge Runtime ("Retry after Nms"), que chega como exceção.
+        const msg = e instanceof Error ? e.message : String(e)
+        const m = msg.match(/Retry after (\d+)\s*ms/i)
+        ultimoErro = msg.slice(0, 120)
+        await sleep(m ? Number(m[1]) + 500 : 2000 * (tentativa + 1))
+        continue
+      }
+
+      if (res.status === 429) {
+        await res.body?.cancel()
+        const ra = Number(res.headers.get('retry-after'))
+        ultimoErro = 'HTTP 429'
+        await sleep(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 3000 * (tentativa + 1))
+        continue
+      }
+      if ([408, 500, 502, 503, 504].includes(res.status)) {
+        await res.body?.cancel()
+        ultimoErro = `HTTP ${res.status}`
+        await sleep(1000 * Math.pow(2, tentativa))
+        continue
+      }
+      if (res.status === 404) { await res.body?.cancel(); return null }
+      if (res.status === 403) {
+        await res.body?.cancel()
+        throw new MondeErro(403, `Monde 403 em ${path.split('/')[1]}: recurso não liberado na chave`)
+      }
+      if (res.status === 401) {
+        await res.body?.cancel()
+        throw new MondeErro(401, 'Monde 401: chave recusada (confira o secret MONDE_V3_API_KEY)')
+      }
+      if (!res.ok) {
+        const t = await res.text().catch(() => '')
+        throw new MondeErro(res.status, `Monde ${res.status} em ${path}: ${t.slice(0, 200)}`)
+      }
+      return await res.json()
+    }
+    throw new MondeErro(0, `Monde indisponível após 6 tentativas em ${path} (${ultimoErro})`)
+  }
+}
+
+/** Detalhe de um recurso: o Monde embrulha em { data: {...} }. */
+// deno-lint-ignore no-explicit-any
+function unwrap(body: any): any {
+  if (body && typeof body === 'object' && body.data && !Array.isArray(body.data)) return body.data
+  return body
+}
+
+// ─── Cache de nomes ───────────────────────────────────────────────────────────
+
+// deno-lint-ignore no-explicit-any
+type Sb = any
+
+/**
+ * Nomes de pessoa (pagante, vendedor, fornecedor) e de produto do catálogo. Primeiro o
+ * banco, depois o Monde; o resultado — inclusive "não existe" (404) — vai para o banco,
+ * para nunca pedir o mesmo id duas vezes.
+ */
+class Nomes {
+  private mapa = new Map<string, string | null>()
+  private novos: Array<{ tipo: string; id: string; nome: string | null; extra: unknown; fetched_at: string }> = []
+
+  constructor(private sb: Sb, private monde: Monde) {}
+
+  async carregar(tipo: string, ids: Iterable<string>): Promise<void> {
+    const faltam = [...new Set(ids)].filter((id) => id && !this.mapa.has(`${tipo}:${id}`))
+    for (const lote of chunk(faltam, 200)) {
+      const { data } = await this.sb.from('monde_v3_nomes').select('id, nome').eq('tipo', tipo).in('id', lote)
+      for (const r of data ?? []) this.mapa.set(`${tipo}:${r.id}`, r.nome ?? null)
+    }
+  }
+
+  /** Quantos ids deste conjunto ainda precisam de chamada ao Monde. */
+  faltando(tipo: string, ids: Iterable<string>): number {
+    let n = 0
+    for (const id of new Set(ids)) if (id && !this.mapa.has(`${tipo}:${id}`)) n++
+    return n
+  }
+
+  async pessoa(id: string | null | undefined): Promise<string | null> {
+    if (!id) return null
+    const k = `person:${id}`
+    if (this.mapa.has(k)) return this.mapa.get(k) ?? null
+    const p = unwrap(await this.monde.get(`/people/${id}`))
+    const nome = (p?.name ?? p?.legal_name ?? '').trim() || null
+    this.guardar('person', id, nome, p ? { person_kind: p.person_kind ?? null } : { ausente: true })
+    return nome
+  }
+
+  async produto(id: string | null | undefined): Promise<string | null> {
+    if (!id) return null
+    const k = `product:${id}`
+    if (this.mapa.has(k)) return this.mapa.get(k) ?? null
+    const p = unwrap(await this.monde.get(`/products/${id}`))
+    const nome = (p?.name ?? '').trim() || null
+    this.guardar('product', id, nome, p ? { kind: p.kind ?? null } : { ausente: true })
+    return nome
+  }
+
+  private guardar(tipo: string, id: string, nome: string | null, extra: unknown) {
+    this.mapa.set(`${tipo}:${id}`, nome)
+    this.novos.push({ tipo, id, nome, extra, fetched_at: new Date().toISOString() })
+  }
+
+  async salvar(): Promise<void> {
+    if (this.novos.length === 0) return
+    const lote = this.novos
+    this.novos = []
+    await this.sb.from('monde_v3_nomes').upsert(lote, { onConflict: 'tipo,id' })
+  }
+}
+
+/**
+ * Id do campo personalizado "Setor". A venda traz custom_fields só como [{id, value}];
+ * o nome está em /custom_fields. Relido 1x por semana. Se "Setor" não for encontrado a
+ * rodada FALHA — gravar sem setor jogaria todo o faturamento em INDEFINIDO.
+ */
+async function idDoSetor(sb: Sb, monde: Monde): Promise<string> {
+  const { data } = await sb.from('monde_v3_nomes').select('id, nome, fetched_at').eq('tipo', 'custom_field')
+  const semana = Date.now() - 7 * 86_400_000
+  let campos: Array<{ id: string; nome: string | null }> = data ?? []
+  const velho = campos.length === 0 ||
+    campos.some((c: { fetched_at?: string }) => !c.fetched_at || new Date(c.fetched_at).getTime() < semana)
+
+  if (velho) {
+    const lidos: Array<{ tipo: string; id: string; nome: string | null; extra: unknown; fetched_at: string }> = []
+    for (let page = 1; page <= 20; page++) {
+      const body = await monde.get('/custom_fields', { resource: 'sales', page, size: 50 })
+      for (const c of body?.data ?? []) {
+        lidos.push({
+          tipo: 'custom_field', id: String(c.id), nome: c.name ?? null,
+          extra: { kind: c.kind ?? null, active: c.active ?? null }, fetched_at: new Date().toISOString(),
+        })
+      }
+      if (!body?.pagination?.has_next_page) break
+    }
+    if (lidos.length > 0) {
+      await sb.from('monde_v3_nomes').upsert(lidos, { onConflict: 'tipo,id' })
+      campos = lidos
+    }
+  }
+
+  const setor = campos.find((c) => (c.nome ?? '').trim().toLowerCase() === 'setor')
+  if (!setor) throw new Error('Campo personalizado "Setor" não encontrado em /custom_fields — sync abortado')
+  return String(setor.id)
+}
+
+// ─── Venda → linhas de `vendas` ───────────────────────────────────────────────
 
 interface VendaRow {
   venda_numero: number
@@ -184,382 +386,470 @@ interface VendaRow {
   faturamento: number
 }
 
-// ─── HTTP ─────────────────────────────────────────────────────────────────────
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => setTimeout(r, ms))
-}
-
 /**
- * Intervalo mínimo entre requisições de SAÍDA.
- *
- * O Edge Runtime do Supabase limita as requisições que a função faz para fora e, quando
- * estoura, LANÇA um erro ("Rate limit exceeded for trace …. Retry after 45822ms") em vez
- * de devolver um status HTTP — então não cai no retry por código de status. Foi o que
- * derrubou o primeiro deploy desta versão: o delta disparava ~64 requisições em rajada.
- * 160 ms ≈ 6 req/s, que passa folgado, e o custo é irrelevante (uma janela de 2 meses
- * são ~40 requisições, ~7 s de espera somada).
+ * Rateia a receita da venda entre as linhas ativas, proporcionalmente ao valor. Se
+ * todas as linhas valem 0 mas há receita (ex.: venda 72833, passagem de valor 0 com
+ * comissão pura), divide igual — o rateio proporcional dividiria por zero.
  */
-const MIN_REQUEST_GAP_MS = 160
-let ultimaRequisicao = 0
-
-async function aguardarVez(): Promise<void> {
-  const espera = ultimaRequisicao + MIN_REQUEST_GAP_MS - Date.now()
-  if (espera > 0) await sleep(espera)
-  ultimaRequisicao = Date.now()
-}
-
-/** Extrai o "Retry after Nms" da mensagem de rate limit do Edge Runtime. */
-function esperaDoRateLimit(msg: string): number | null {
-  if (!msg.includes('Rate limit exceeded')) return null
-  const m = msg.match(/Retry after (\d+)\s*ms/i)
-  return m ? Number(m[1]) : 5000
-}
-
-/**
- * GET na API com retry.
- *
- * Desde 2026-08-27 a API devolve 400 em parâmetro desconhecido (antes um typo em `from`
- * devolvia a base inteira com HTTP 200). Falhamos ALTO nesse caso: é uma proteção, e
- * engolir o erro traria de volta exatamente a armadilha que ela consertou.
- * O 500 em offset profundo (~página 360+) segue existindo do lado deles; o retry cobre
- * a intermitência e as janelas mensais mantêm o offset baixo.
- */
-async function feedFetch(
-  params: Record<string, string | number>,
-  apiKey: string,
-  // deno-lint-ignore no-explicit-any
-): Promise<any> {
-  const url = new URL(MONDE_DATA_URL)
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
-  const headers = { 'x-api-key': apiKey, Accept: 'application/json' }
-
-  let lastErr = ''
-  for (let attempt = 0; attempt < 6; attempt++) {
-    await aguardarVez()
-
-    let res: Response
-    try {
-      res = await fetch(url.toString(), { headers })
-    } catch (e) {
-      // O rate limit de saída do Edge Runtime chega aqui como exceção, não como status.
-      const msg = e instanceof Error ? e.message : String(e)
-      const espera = esperaDoRateLimit(msg)
-      if (espera !== null && attempt < 5) {
-        lastErr = msg
-        await sleep(espera + 500)
-        continue
-      }
-      throw e
-    }
-
-    if (res.status === 400) {
-      const body = await res.json().catch(() => ({}))
-      if (body?.desconhecidos?.length) {
-        throw new Error(
-          `API recusou parâmetro desconhecido: ${body.desconhecidos.join(', ')}. ` +
-          `Aceitos em ${params.resource}: ${(body.aceitos_neste_recurso ?? []).join(', ')}`,
-        )
-      }
-      throw new Error(`API 400: ${body?.error ?? '(sem detalhe)'}`)
-    }
-
-    if ([408, 429, 500, 502, 503, 504].includes(res.status)) {
-      lastErr = `HTTP ${res.status}`
-      await sleep(1000 * Math.pow(2, attempt))
-      continue
-    }
-    if (!res.ok) {
-      const t = await res.text().catch(() => '')
-      throw new Error(`API ${res.status}: ${t.slice(0, 200)}`)
-    }
-    return await res.json()
-  }
-  throw new Error(`API de Dados do Monde indisponível após 6 tentativas (${lastErr})`)
-}
-
-/**
- * Pagina uma listagem até a página curta, MAPEANDO e descartando a linha crua na hora.
- * `products` devolve `raw` + `passengers` (~63% do payload, ~3,4 KB/linha) e não há como
- * pedir sem: acumular um ano cru seriam ~32 MB retidos, o que estoura a Edge.
- */
-async function paginar<R>(
-  params: Record<string, string | number>,
-  apiKey: string,
-  // deno-lint-ignore no-explicit-any
-  mapear: (row: any) => R,
-): Promise<R[]> {
-  const out: R[] = []
-  let lidas = 0
-  let total: number | undefined
-  for (let page = 1; page <= 2000; page++) {
-    const body = await feedFetch({ ...params, page, page_size: PAGE_SIZE }, apiKey)
-    const rows = body?.data ?? []
-    if (total === undefined && typeof body?.total === 'number') total = body.total
-    for (const r of rows) out.push(mapear(r))
-    lidas += rows.length
-    // Usa o page_size ECOADO, nunca o pedido: a API rebaixa acima de 200 e avisa em
-    // `page_size_maximo`. Comparar com o pedido terminaria o laço na 1ª página.
-    const size = body?.page_size_maximo ?? body?.page_size ?? PAGE_SIZE
-    if (rows.length < size) break
-    if (total !== undefined && lidas >= total) break
-  }
-  return out
-}
-
-/**
- * Só conta os registros da janela, sem baixar nada: pede uma linha e lê o `total` do
- * envelope. O delta usa isto para descobrir quais meses mudaram — a detecção anterior
- * paginava os dois feeds de TODOS os meses só para ver se voltava algo, o que era o
- * principal candidato a estourar o tempo desta função. E um estouro no meio da escrita
- * apagava um mês inteiro (perda de agosto/2026).
- */
-async function contar(
-  params: Record<string, string | number>,
-  apiKey: string,
-): Promise<number> {
-  const body = await feedFetch({ ...params, page: 1, page_size: 1 }, apiKey)
-  if (typeof body?.total === 'number') return body.total
-  return (body?.data ?? []).length
-}
-
-/**
- * Remove o placeholder de data que ficou sem preencher no catálogo do Monde
- * ("W - Isabela e Erick - DDMMAA"). São 16 casos em 2026 e esse texto aparece ao
- * cliente no card de Contratos. Datas REAIS ("- 05SEP26") são preservadas.
- */
-function limparOperacao(nome: string | null | undefined): string | null {
-  if (!nome) return null
-  const limpo = nome.replace(/\s*-\s*DDMMAA\s*$/i, '').trim()
-  return limpo || null
+function ratearReceita(receita: number, valor: number, soma: number, qtd: number): number {
+  if (receita === 0) return 0
+  return round2(soma > 0 ? receita * valor / soma : receita / qtd)
 }
 
 // deno-lint-ignore no-explicit-any
-function toFeedSale(r: any): FeedSale {
-  const setor = (r.custom_fields ?? [])
-    // deno-lint-ignore no-explicit-any
-    .find((f: any) => f?.name === 'Setor')?.value ?? null
-  return {
-    sale_number: Number(r.sale_number),
-    sale_date: r.sale_date ?? '',
-    status: r.status ?? '',
-    setor_bruto: setor,
-    vendedor: r.travel_agent_name ?? null,
-    pagante: r.payer_name ?? r.intermediary_name_resolvido ?? null,
-    operacao: limparOperacao(r.operation_product_name_resolvido),
-    receita: Number(r.total_revenue ?? 0),
-    synced_at: r.synced_at ?? null,
-  }
+function produtosDaVenda(d: any): Array<{ kind: string; p: any }> {
+  // deno-lint-ignore no-explicit-any
+  return KINDS.flatMap((k) => ((d?.[k] ?? []) as any[]).map((p) => ({ kind: k as string, p })))
 }
 
+/** Todos os ids de pessoa e produto que a venda cita, para carregar o cache de uma vez. */
 // deno-lint-ignore no-explicit-any
-function toFeedLine(r: any): FeedLine {
-  const kind = r.product_kind ?? ''
-  return {
-    sale_number: Number(r.sale_number),
-    product_status: r.product_status ?? '',
-    produto: (r.product_name_resolvido ?? '').trim() || KIND_PRODUTO[kind] || null,
-    fornecedor: (r.supplier_name_resolvido ?? '').trim() || null,
-    valor: Number(r.total_amount ?? 0),
+function idsCitados(d: any): { pessoas: string[]; produtos: string[] } {
+  const pessoas = [d?.seller?.id, d?.payer?.id, d?.intermediary?.id]
+  const produtos = [d?.operation?.id]
+  for (const { p } of produtosDaVenda(d)) {
+    if (p?.status !== 'active') continue
+    pessoas.push(p?.supplier?.id)
+    produtos.push(p?.product?.id)
   }
+  return { pessoas: pessoas.filter(Boolean), produtos: produtos.filter(Boolean) }
 }
 
-// ─── Janelas ──────────────────────────────────────────────────────────────────
-
-function janelasMensais(from: string, to: string): Array<{ from: string; to: string }> {
-  const out: Array<{ from: string; to: string }> = []
-  const [fy, fm] = from.split('-').map(Number)
-  const [ty, tm] = to.split('-').map(Number)
-  let y = fy, m = fm
-  while (y < ty || (y === ty && m <= tm)) {
-    const ini = `${y}-${String(m).padStart(2, '0')}-01`
-    const ultimo = new Date(Date.UTC(y, m, 0)).getUTCDate()
-    const fim = `${y}-${String(m).padStart(2, '0')}-${String(ultimo).padStart(2, '0')}`
-    out.push({ from: ini > from ? ini : from, to: fim < to ? fim : to })
-    m++
-    if (m > 12) { m = 1; y++ }
-  }
-  return out
-}
-
-async function lerVendas(
-  w: { from: string; to: string; syncedSince?: string },
-  apiKey: string,
-): Promise<FeedSale[]> {
-  const p: Record<string, string | number> = { resource: 'sales', from: w.from, to: w.to }
-  if (w.syncedSince) p.synced_since = w.syncedSince
-  return await paginar<FeedSale>(p, apiKey, toFeedSale)
-}
-
-async function lerLinhas(
-  w: { from: string; to: string; syncedSince?: string },
-  apiKey: string,
-): Promise<FeedLine[]> {
-  const p: Record<string, string | number> = { resource: 'products', from: w.from, to: w.to }
-  if (w.syncedSince) p.synced_since = w.syncedSince
-  return await paginar<FeedLine>(p, apiKey, toFeedLine)
-}
-
-// ─── Régua de soma ────────────────────────────────────────────────────────────
-
-interface Construido {
+interface Construida {
   linhas: VendaRow[]
-  vistos: number[]
-  canceladasVenda: number
-  canceladasProduto: number
-  semLinhaAtiva: number
+  ativas: number
+  status: string
 }
 
-/**
- * Junta os feeds e aplica a régua. `receitas` é rateada entre as linhas ativas na
- * proporção do valor — a receita só existe no nível da venda e NÃO é reconstruível a
- * partir de `products` (a melhor fórmula testada fecha em ~72% das vendas, errando até
- * R$ 4,7 mil, e há receita negativa que fórmula nenhuma prevê).
- * Receita negativa (permuta/patrocínio com 100% de desconto) vira 0, como no relatório.
- */
-/**
- * Rateia a receita da venda entre as linhas ativas, proporcionalmente ao valor.
- * Quando TODAS as linhas ativas valem 0 mas a venda tem receita, divide igualmente:
- * o rateio proporcional dividiria por zero e DESCARTARIA a receita. Raro mas real —
- * venda 72833/2026 é uma passagem de valor 0 com R$ 187,69 de comissão pura.
- */
-function ratearReceita(
-  receitaVenda: number,
-  valorLinha: number,
-  somaAtiva: number,
-  qtdLinhas: number,
-): number {
-  if (receitaVenda === 0) return 0
-  const bruto = somaAtiva > 0
-    ? receitaVenda * valorLinha / somaAtiva
-    : receitaVenda / qtdLinhas
-  return Math.round(bruto * 100) / 100
+// deno-lint-ignore no-explicit-any
+async function construirVenda(d: any, nomes: Nomes, setorId: string, manual: Set<number>, anterior: string | null): Promise<Construida> {
+  const numero = Number(d.sale_number)
+  const status = String(d.status ?? '')
+  if (status === 'canceled' || manual.has(numero)) return { linhas: [], ativas: 0, status }
+
+  const ativos = produtosDaVenda(d).filter(({ p }) => p?.status === 'active')
+  if (ativos.length === 0) return { linhas: [], ativas: 0, status }
+
+  // deno-lint-ignore no-explicit-any
+  const setorBruto = ((d.custom_fields ?? []) as any[]).find((f) => String(f?.id) === setorId)?.value ?? null
+  const vendedor = await nomes.pessoa(d.seller?.id)
+  const pagante = (await nomes.pessoa(d.payer?.id)) ?? (await nomes.pessoa(d.intermediary?.id))
+  const operacao = limparOperacao(await nomes.produto(d.operation?.id))
+
+  const soma = ativos.reduce((s, { p }) => s + num(p?.totals?.amount), 0)
+  const receita = Math.max(num(d.totals?.revenue), 0)
+
+  const linhas: VendaRow[] = []
+  for (const { kind, p } of ativos) {
+    const valor = num(p?.totals?.amount)
+    const produto = (await nomes.produto(p?.product?.id)) ?? KIND_PRODUTO[kind] ?? anterior
+    linhas.push({
+      venda_numero: numero,
+      vendedor: vendedor ?? 'Sem vendedor',
+      data_venda: String(d.sale_date),
+      pagante: pagante ?? 'Sem cliente',
+      produto,
+      fornecedor: await nomes.pessoa(p?.supplier?.id),
+      setor_bruto: setorBruto,
+      setor_grupo: mapSetor(setorBruto),
+      representante: null,
+      operacao,
+      situacao: status === 'opened' ? 'Aberta' : 'Fechada',
+      data_cancelamento: null,
+      valor_total: valor,
+      receitas: ratearReceita(receita, valor, soma, ativos.length),
+      faturamento: valor,
+    })
+  }
+  return { linhas, ativas: ativos.length, status }
 }
 
-function construirLinhas(
-  vendas: FeedSale[],
-  linhas: FeedLine[],
-  produtoAnterior: Map<number, string>,
-): Construido {
-  const porVenda = new Map<number, FeedLine[]>()
-  for (const l of linhas) {
-    const arr = porVenda.get(l.sale_number)
-    if (arr) arr.push(l); else porVenda.set(l.sale_number, [l])
+// ─── Escrita em `vendas` ──────────────────────────────────────────────────────
+
+/** Registro de upload criado só na primeira escrita da rodada (rastro de toda escrita). */
+class Escrita {
+  uploadId = ''
+  inseridas = 0
+  apagadas = 0
+  uploadsTocados = new Set<string>()
+  constructor(private sb: Sb) {}
+
+  private async garantirUpload() {
+    if (this.uploadId) return
+    const { data, error } = await this.sb.from('uploads').insert({
+      nome_arquivo: `${FILENAME_PREFIX}v3-${new Date().toISOString().slice(0, 10)}`,
+      total_linhas: 0, linhas_inseridas: 0, linhas_atualizadas: 0,
+      // 'warning' = em andamento; a tabela só aceita success/warning/error.
+      alertas_qualidade: [], status: 'warning',
+    }).select('id').single()
+    if (error || !data) throw new Error(`Erro ao registrar sync: ${error?.message}`)
+    this.uploadId = data.id
   }
 
-  const out: VendaRow[] = []
-  const vistos: number[] = []
-  let canceladasVenda = 0, canceladasProduto = 0, semLinhaAtiva = 0
+  /** Estado atual no banco dos números: soma de valor/receita e o produto já gravado. */
+  async atual(numeros: number[]): Promise<Map<number, { valor: number; receita: number; produto: string | null }>> {
+    const m = new Map<number, { valor: number; receita: number; produto: string | null }>()
+    for (const lote of chunk(numeros, 150)) {
+      const { data } = await this.sb.from('vendas')
+        .select('venda_numero, upload_id, produto, valor_total, receitas').in('venda_numero', lote)
+      for (const r of data ?? []) {
+        if (r.upload_id) this.uploadsTocados.add(r.upload_id)
+        const cur = m.get(r.venda_numero) ?? { valor: 0, receita: 0, produto: null }
+        cur.valor += num(r.valor_total)
+        cur.receita += num(r.receitas)
+        cur.produto = cur.produto ?? r.produto ?? null
+        m.set(r.venda_numero, cur)
+      }
+    }
+    return m
+  }
 
-  for (const v of vendas) {
-    vistos.push(v.sale_number)
+  /** Apaga e reinsere os números no mesmo passo: idempotente. */
+  async regravar(numeros: number[], linhas: VendaRow[]): Promise<void> {
+    if (numeros.length === 0) return
+    await this.garantirUpload()
+    for (const lote of chunk(numeros, 150)) {
+      const { error } = await this.sb.from('vendas').delete().in('venda_numero', lote)
+      if (error) throw new Error(`Erro ao apagar vendas: ${error.message}`)
+    }
+    this.apagadas += numeros.length
+    const novas = linhas.map((l) => ({ ...l, upload_id: this.uploadId }))
+    for (const lote of chunk(novas, INSERT_BATCH)) {
+      const { error } = await this.sb.from('vendas').insert(lote)
+      if (error) throw new Error(`Erro ao inserir vendas: ${error.message}`)
+    }
+    this.inseridas += novas.length
+  }
 
-    // Passo 1: venda cancelada sai inteira (o caso que ficava somado para sempre).
-    if (v.status === 'canceled') { canceladasVenda++; continue }
+  async fechar(status: 'success' | 'error'): Promise<void> {
+    if (!this.uploadId) return
+    await this.sb.from('uploads').update({
+      status, total_linhas: this.inseridas, linhas_inseridas: this.inseridas, linhas_atualizadas: this.apagadas,
+    }).eq('id', this.uploadId)
+    if (status === 'success') await this.limparOrfaos()
+  }
 
-    const todas = porVenda.get(v.sale_number) ?? []
-    // Passo 2: só produto ativo entra.
-    const ativas = todas.filter((l) => l.product_status === 'active')
-    canceladasProduto += todas.length - ativas.length
+  private async limparOrfaos(): Promise<void> {
+    const candidatos = [...this.uploadsTocados].filter((id) => id !== this.uploadId)
+    if (candidatos.length === 0) return
+    const emUso = new Set<string>()
+    for (const lote of chunk(candidatos, 100)) {
+      const { data } = await this.sb.from('vendas').select('upload_id').in('upload_id', lote).limit(10000)
+      for (const r of data ?? []) if (r.upload_id) emUso.add(r.upload_id)
+    }
+    const orfaos = candidatos.filter((id) => !emUso.has(id))
+    for (const lote of chunk(orfaos, 100)) await this.sb.from('uploads').delete().in('id', lote)
+  }
+}
 
-    // Venda viva cujos produtos foram todos cancelados/excluídos: some do dashboard.
-    if (ativas.length === 0) { semLinhaAtiva++; continue }
+// ─── Fase 1: lista → índice ───────────────────────────────────────────────────
 
-    const somaAtiva = ativas.reduce((s, l) => s + l.valor, 0)
-    const receitaVenda = Math.max(v.receita, 0)
-    const anterior = produtoAnterior.get(v.sale_number) ?? null
+// deno-lint-ignore no-explicit-any
+function hashLista(r: any): string {
+  const t = r?.totals ?? {}
+  return JSON.stringify([
+    r?.status ?? null, r?.sale_date ?? null,
+    t.products ?? null, t.fees ?? null, t.discount ?? null, t.revenue ?? null, t.balance ?? null, t.final_amount ?? null,
+  ])
+}
 
-    for (const l of ativas) {
-      out.push({
-        venda_numero: v.sale_number,
-        vendedor: v.vendedor ?? 'Sem vendedor',
-        data_venda: v.sale_date,
-        pagante: v.pagante ?? 'Sem cliente',
-        produto: l.produto ?? anterior,
-        fornecedor: l.fornecedor,
-        setor_bruto: v.setor_bruto,
-        setor_grupo: mapSetor(v.setor_bruto),
-        representante: null,
-        operacao: v.operacao,
-        situacao: v.status === 'opened' ? 'Aberta' : 'Fechada',
-        // Só linha ATIVA é gravada, então a linha nunca representa cancelamento.
-        data_cancelamento: null,
-        valor_total: l.valor,
-        receitas: ratearReceita(receitaVenda, l.valor, somaAtiva, ativas.length),
-        faturamento: l.valor,
-      })
+interface ResumoLista {
+  paginas: number
+  novas: number
+  alteradas: number
+  canceladas: number
+  ciclo: string
+}
+
+/**
+ * Grava uma página da lista no índice. Decide o que vai para a fila de detalhe:
+ *   nova e já no banco (veio do TTARS) → carga inicial (prioridade 1) se for de 2026,
+ *                                         senão só revisão periódica espalhada;
+ *   nova e fora do banco                → prioridade 0 (venda nova);
+ *   status/data/totais mudaram          → prioridade 0;
+ *   cancelada (nova ou mudou)           → sai de `vendas` já, sem abrir o detalhe.
+ */
+// deno-lint-ignore no-explicit-any
+async function gravarPaginaLista(sb: Sb, rows: any[], piso: string, escrita: Escrita, manual: Set<number>, r: ResumoLista): Promise<void> {
+  const vis = rows.filter((x) => x?.id && x?.sale_date && x.sale_date >= piso)
+  if (vis.length === 0) return
+  const agora = new Date().toISOString()
+
+  const ids = vis.map((x) => x.id as string)
+  const { data: exist } = await sb.from('monde_v3_vendas').select('sale_id, list_hash').in('sale_id', ids)
+  const hashAntigo = new Map<string, string | null>((exist ?? []).map((e: { sale_id: string; list_hash: string | null }) => [e.sale_id, e.list_hash]))
+
+  const novosNums = vis.filter((x) => !hashAntigo.has(x.id)).map((x) => Number(x.sale_number))
+  const noBanco = new Set<number>()
+  for (const lote of chunk(novosNums, 150)) {
+    const { data } = await sb.from('vendas').select('venda_numero').in('venda_numero', lote)
+    for (const v of data ?? []) noBanco.add(v.venda_numero)
+  }
+
+  const gravar: Record<string, unknown>[] = []
+  const soVisto: string[] = []
+  const cancelar: number[] = []
+
+  for (const x of vis) {
+    const numero = Number(x.sale_number)
+    const status = String(x.status ?? '')
+    const hash = hashLista(x)
+    const base = {
+      sale_id: x.id, sale_number: numero, sale_date: x.sale_date, status,
+      final_amount: x.totals?.final_amount ?? null, revenue: x.totals?.revenue ?? null,
+      balance: x.totals?.balance ?? null, list_hash: hash, listed_at: agora, updated_at: agora,
+    }
+    const novo = !hashAntigo.has(x.id)
+    if (!novo && hashAntigo.get(x.id) === hash) { soVisto.push(x.id); continue }
+
+    if (status === 'canceled' || manual.has(numero)) {
+      r.canceladas++
+      cancelar.push(numero)
+      gravar.push({ ...base, prioridade: 2, linhas_ativas: 0, detail_at: agora, refresh_at: proximaRevisao('canceled', x.sale_date) })
+    } else if (novo && noBanco.has(numero)) {
+      r.novas++
+      gravar.push(x.sale_date >= CUTOFF
+        ? { ...base, prioridade: 1, refresh_at: agora }
+        : { ...base, prioridade: 2, refresh_at: new Date(Date.now() + Math.random() * 45 * 86_400_000).toISOString() })
+    } else {
+      if (novo) r.novas++; else r.alteradas++
+      gravar.push({ ...base, prioridade: 0, refresh_at: agora })
     }
   }
 
-  return { linhas: out, vistos, canceladasVenda, canceladasProduto, semLinhaAtiva }
+  if (cancelar.length) {
+    await escrita.atual(cancelar)
+    await escrita.regravar(cancelar, [])
+  }
+  if (gravar.length) {
+    const { error } = await sb.from('monde_v3_vendas').upsert(gravar, { onConflict: 'sale_id' })
+    if (error) throw new Error(`Erro ao gravar índice: ${error.message}`)
+  }
+  if (soVisto.length) {
+    await sb.from('monde_v3_vendas').update({ listed_at: agora }).in('sale_id', soVisto)
+  }
 }
 
-// ─── Utilidades ───────────────────────────────────────────────────────────────
+async function faseLista(sb: Sb, monde: Monde, escrita: Escrita, manual: Set<number>): Promise<ResumoLista> {
+  const r: ResumoLista = { paginas: 0, novas: 0, alteradas: 0, canceladas: 0, ciclo: 'topo' }
+  const piso = inicioLista()
+  const { data: st } = await sb.from('sync_state').select('cursor_page, running, last_done_at').eq('key', 'v3-lista').maybeSingle()
+  let emCiclo = !!st?.running
+  let cursor = Number(st?.cursor_page ?? 1)
+  const ultimoFim = st?.last_done_at ? new Date(st.last_done_at).getTime() : 0
+  if (!emCiclo && Date.now() - ultimoFim >= CICLO_LISTA_HORAS * 3_600_000) { emCiclo = true; cursor = 1 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  const lerPagina = async (page: number) => {
+    const body = await monde.get('/sales', { page, size: 50, status: 'opened,closed,canceled' })
+    r.paginas++
+    // deno-lint-ignore no-explicit-any
+    const rows: any[] = body?.data ?? []
+    await gravarPaginaLista(sb, rows, piso, escrita, manual, r)
+    const fim = !body?.pagination?.has_next_page || rows.length === 0 ||
+      rows.every((x) => !x?.sale_date || x.sale_date < piso)
+    return fim
+  }
+
+  // Página 1 sempre: venda recém-criada aparece na próxima rodada, com ciclo ou sem.
+  if (!emCiclo || cursor > 1) await lerPagina(1)
+
+  if (emCiclo) {
+    r.ciclo = `página ${cursor}`
+    let lidas = 0
+    let terminou = false
+    while (lidas < LISTA_PAGINAS_POR_RODADA && monde.resta() > RESERVA_DETALHE_MS) {
+      terminou = await lerPagina(cursor)
+      lidas++
+      if (terminou) break
+      cursor++
+    }
+    const agora = new Date().toISOString()
+    if (terminou) {
+      r.ciclo = `ciclo completo na página ${cursor}`
+      await sb.from('sync_state').update({ running: false, cursor_page: 1, last_done_at: agora, updated_at: agora, note: r.ciclo }).eq('key', 'v3-lista')
+    } else {
+      r.ciclo = `ciclo na página ${cursor}`
+      await sb.from('sync_state').update({ running: true, cursor_page: cursor, updated_at: agora, note: r.ciclo }).eq('key', 'v3-lista')
+    }
+  }
+  return r
+}
+
+// ─── Fase 2: fila de detalhe ──────────────────────────────────────────────────
+
+interface ResumoDetalhe {
+  vendas: number
+  semLinhaAtiva: number
+  removidas: number
+  erros: string[]
+}
+
+async function faseDetalhe(sb: Sb, monde: Monde, escrita: Escrita, manual: Set<number>, setorId: string): Promise<ResumoDetalhe> {
+  const r: ResumoDetalhe = { vendas: 0, semLinhaAtiva: 0, removidas: 0, erros: [] }
+  const nomes = new Nomes(sb, monde)
+  let parar = false
+
+  while (!parar && monde.resta() > FOLGA_DETALHE_MS) {
+    const { data: fila } = await sb.from('monde_v3_vendas')
+      .select('sale_id, sale_number, prioridade, diff_valor')
+      .lte('refresh_at', new Date().toISOString())
+      .order('prioridade', { ascending: true })
+      .order('sale_date', { ascending: false })
+      .limit(10)
+    if (!fila || fila.length === 0) break
+
+    for (const item of fila) {
+      if (monde.resta() <= FOLGA_DETALHE_MS) { parar = true; break }
+      const agora = new Date().toISOString()
+      try {
+        const d = unwrap(await monde.get(`/sales/${item.sale_id}`))
+        const numero = Number(item.sale_number)
+
+        if (!d || !d.sale_number) {
+          // 404: a venda não existe mais no Monde. Sai do banco e do índice.
+          await escrita.atual([numero])
+          await escrita.regravar([numero], [])
+          await sb.from('monde_v3_vendas').delete().eq('sale_id', item.sale_id)
+          r.removidas++
+          continue
+        }
+
+        const ids = idsCitados(d)
+        await nomes.carregar('person', ids.pessoas)
+        await nomes.carregar('product', ids.produtos)
+        // Não começa uma venda cujos nomes não cabem no tempo que resta: ela ficaria pela metade.
+        const custo = nomes.faltando('person', ids.pessoas) + nomes.faltando('product', ids.produtos)
+        if (monde.resta() < (custo + 1) * GAP_MS + 3000) { parar = true; break }
+
+        const antes = (await escrita.atual([numero])).get(numero)
+        const c = await construirVenda(d, nomes, setorId, manual, antes?.produto ?? null)
+        await escrita.regravar([numero], c.linhas)
+        await nomes.salvar()
+
+        const valor = c.linhas.reduce((s, l) => s + l.valor_total, 0)
+        const receita = c.linhas.reduce((s, l) => s + l.receitas, 0)
+        const upd: Record<string, unknown> = {
+          status: c.status, sale_date: d.sale_date,
+          final_amount: d.totals?.final_amount ?? null, revenue: d.totals?.revenue ?? null,
+          balance: d.totals?.balance ?? null,
+          detail_at: agora, linhas_ativas: c.ativas, prioridade: 2, erro: null,
+          refresh_at: proximaRevisao(c.status, String(d.sale_date)), updated_at: agora,
+        }
+        // Auditoria da troca TTARS → v3: primeira leitura de uma venda que já estava no banco.
+        if (item.prioridade === 1 && item.diff_valor === null) {
+          upd.diff_valor = round2(valor - (antes?.valor ?? 0))
+          upd.diff_receita = round2(receita - (antes?.receita ?? 0))
+        }
+        await sb.from('monde_v3_vendas').update(upd).eq('sale_id', item.sale_id)
+        r.vendas++
+        if (c.ativas === 0 && c.status !== 'canceled') r.semLinhaAtiva++
+      } catch (e) {
+        // 401/403 e prazo esgotado param a rodada; o resto marca a venda e segue.
+        if (e instanceof MondeErro && (e.status === 401 || e.status === 403 || e.status === 0)) throw e
+        const msg = e instanceof Error ? e.message : String(e)
+        r.erros.push(`${item.sale_number}: ${msg.slice(0, 160)}`)
+        await sb.from('monde_v3_vendas').update({
+          erro: msg.slice(0, 500), refresh_at: new Date(Date.now() + 3_600_000).toISOString(), updated_at: agora,
+        }).eq('sale_id', item.sale_id)
+      }
+    }
+  }
+  await nomes.salvar()
+  return r
+}
+
+// ─── Diagnóstico (service role) ───────────────────────────────────────────────
+
+// deno-lint-ignore no-explicit-any
+function datasDoProduto(kind: string, p: any): { inicio: string | null; fim: string | null } {
+  if (kind === 'airline_tickets') {
+    // deno-lint-ignore no-explicit-any
+    const segs = ((p?.segments ?? []) as any[]).map((s) => s?.departure_date).filter(Boolean).sort()
+    return { inicio: segs[0] ?? null, fim: segs[segs.length - 1] ?? null }
+  }
+  return {
+    inicio: p?.check_in ?? p?.begin_date ?? p?.pickup_date ?? p?.departure_date ?? null,
+    fim: p?.check_out ?? p?.end_date ?? p?.dropoff_date ?? p?.arrival_date ?? null,
+  }
+}
+
+async function modoCompare(sb: Sb, monde: Monde, saleIds: string[]): Promise<unknown[]> {
+  const setorId = await idDoSetor(sb, monde)
+  const nomes = new Nomes(sb, monde)
+  const out: unknown[] = []
+  for (const id of saleIds.slice(0, 5)) {
+    const d = unwrap(await monde.get(`/sales/${id}`))
+    if (!d) { out.push({ sale_id: id, erro: '404' }); continue }
+    const c = await construirVenda(d, nomes, setorId, new Set(), null)
+    out.push({
+      sale_id: id,
+      sale_number: Number(d.sale_number),
+      sale_date: d.sale_date,
+      created_at: d.created_at ?? null,
+      departure_date: d.departure_date ?? null,
+      return_date: d.return_date ?? null,
+      status: d.status,
+      valor: num(d.totals?.final_amount),
+      receita: num(d.totals?.revenue),
+      em_aberto: num(d.totals?.balance),
+      pago: round2(num(d.totals?.final_amount) - num(d.totals?.balance)),
+      vendedor: c.linhas[0]?.vendedor ?? null,
+      pagante: c.linhas[0]?.pagante ?? null,
+      setor: c.linhas[0]?.setor_bruto ?? null,
+      operacao: c.linhas[0]?.operacao ?? null,
+      produtos: produtosDaVenda(d).map(({ kind, p }) => ({
+        kind, status: p?.status, valor: num(p?.totals?.amount),
+        ...datasDoProduto(kind, p),
+        // deno-lint-ignore no-explicit-any
+        passageiros: ((p?.passengers ?? []) as any[]).map((x) => x?.person?.id).filter(Boolean),
+      })),
+      linhas_gravadas: c.linhas.map((l) => ({ produto: l.produto, fornecedor: l.fornecedor, valor: l.valor_total, receita: l.receitas })),
+    })
+  }
+  await nomes.salvar()
   return out
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  })
+async function modoProbe(monde: Monde): Promise<unknown> {
+  const teste = async (nome: string, path: string, params: Record<string, string | number> = {}) => {
+    try {
+      const b = await monde.get(path, params)
+      return { nome, ok: b !== null, status: b === null ? 404 : 200, chaves: b ? Object.keys(unwrap(b) ?? {}).slice(0, 40) : [] }
+    } catch (e) {
+      return { nome, ok: false, status: e instanceof MondeErro ? e.status : -1, erro: e instanceof Error ? e.message : String(e) }
+    }
+  }
+  const lista = await monde.get('/sales', { page: 1, size: 1, status: 'opened,closed,canceled' })
+  const v = lista?.data?.[0]
+  const res: unknown[] = [{ nome: 'sales', ok: !!v, paginacao: lista?.pagination ?? null, chaves: v ? Object.keys(v) : [] }]
+  if (v?.id) {
+    const d = unwrap(await monde.get(`/sales/${v.id}`))
+    res.push({ nome: 'sales/{id}', ok: !!d, chaves: d ? Object.keys(d) : [] })
+    if (d?.seller?.id) res.push(await teste('people/{seller}', `/people/${d.seller.id}`))
+    if (d?.seller?.id) res.push(await teste('sellers/{seller}', `/sellers/${d.seller.id}`))
+    if (d?.payer?.id) res.push(await teste('people/{payer}', `/people/${d.payer.id}`))
+    if (d?.operation?.id) res.push(await teste('products/{operation}', `/products/${d.operation.id}`))
+  }
+  res.push(await teste('custom_fields', '/custom_fields', { resource: 'sales', page: 1, size: 50 }))
+  res.push(await teste('products', '/products', { page: 1, size: 1 }))
+  return res
 }
 
 /**
- * Remove uploads sem nenhuma venda. Faz UMA consulta agregando os upload_id ainda em
- * uso, em vez de um COUNT por upload: a versão anterior era O(n) idas ao banco e é
- * suspeita principal do estouro de tempo que apagou agosto/2026.
+ * O gateway (verify_jwt) já validou a assinatura do JWT; aqui só se confere o papel.
+ * Comparar com a string de SUPABASE_SERVICE_ROLE_KEY falha quando o projeto tem mais
+ * de uma chave de service role válida.
  */
-// deno-lint-ignore no-explicit-any
-async function cleanOrphans(supabase: any, uploadIds: string[], keepId?: string): Promise<void> {
-  const candidatos = uploadIds.filter((id) => id !== keepId)
-  if (candidatos.length === 0) return
-  const emUso = new Set<string>()
-  for (const lote of chunk(candidatos, 100)) {
-    const { data } = await supabase
-      .from('vendas').select('upload_id').in('upload_id', lote).limit(10000)
-    for (const r of data ?? []) if (r.upload_id) emUso.add(r.upload_id)
-  }
-  const orfaos = candidatos.filter((id) => !emUso.has(id))
-  for (const lote of chunk(orfaos, 100)) {
-    await supabase.from('uploads').delete().in('id', lote)
-  }
-}
-
-// ─── Marca d'água POR MÊS ─────────────────────────────────────────────────────
-//
-// Uma marca d'água global não converge quando o trabalho não cabe numa invocação: se a
-// rodada processa 2 dos 5 meses afetados e não avança a marca, a rodada seguinte
-// detecta os MESMOS 5 e refaz os 2 primeiros para sempre. Guardando um `synced_at` por
-// mês, o mês já reconciliado deixa de ser detectado e a fila anda sozinha.
-//
-// O mapa vive em `sync_state.note` como JSON (a tabela não tem coluna própria).
-
-type MarcaPorMes = Record<string, string>
-
-function lerMarcas(note: string | null): MarcaPorMes {
-  if (!note) return {}
+function ehServiceRole(req: Request): boolean {
+  const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  const parte = token.split('.')[1]
+  if (!parte) return false
   try {
-    const o = JSON.parse(note)
-    return o && typeof o === 'object' && o.meses ? o.meses as MarcaPorMes : {}
+    const payload = JSON.parse(atob(parte.replace(/-/g, '+').replace(/_/g, '/')))
+    return payload?.role === 'service_role'
   } catch {
-    // Antes de 2026-08-31 o campo guardava texto livre; tratar como "sem marca".
-    return {}
+    return false
   }
-}
-
-function serializarMarcas(marcas: MarcaPorMes, resumo: string): string {
-  return JSON.stringify({ resumo, meses: marcas })
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -567,303 +857,69 @@ function serializarMarcas(marcas: MarcaPorMes, resumo: string): string {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
-  const apiKey = Deno.env.get('MONDE_DATA_API_KEY')
-  if (!apiKey) return json({ ok: false, error: 'MONDE_DATA_API_KEY não configurado' }, 500)
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-  )
+  const token = Deno.env.get('MONDE_V3_API_KEY')
+  if (!token) return json({ ok: false, error: 'MONDE_V3_API_KEY não configurado' }, 500)
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', serviceKey)
 
   const startedAt = new Date().toISOString()
   const body = await req.json().catch(() => ({}))
-  const mode: 'delta' | 'reconcile' | 'rebuild' =
-    body?.mode === 'reconcile' ? 'reconcile' : body?.mode === 'rebuild' ? 'rebuild' : 'delta'
-  const hojeStr = new Date().toISOString().slice(0, 10)
-  function inicioJanelaRebuild(): string {
-    const d = new Date()
-    d.setUTCFullYear(d.getUTCFullYear() - REBUILD_YEARS)
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`
+  const monde = new Monde(token, Date.now() + ORCAMENTO_MS)
+
+  if (body?.mode === 'probe' || body?.mode === 'compare') {
+    if (!ehServiceRole(req)) {
+      return json({ ok: false, error: 'modo restrito à service role' }, 403)
+    }
+    try {
+      const resultado = body.mode === 'probe'
+        ? await modoProbe(monde)
+        : await modoCompare(sb, monde, Array.isArray(body.sale_ids) ? body.sale_ids.map(String) : [])
+      return json({ ok: true, mode: body.mode, chamadasMonde: monde.chamadas, resultado })
+    } catch (e) {
+      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500)
+    }
   }
-  const from: string = mode === 'rebuild'
-    ? inicioJanelaRebuild()
-    : typeof body?.from === 'string' ? body.from : CUTOFF
-  const to: string = mode === 'rebuild' ? hojeStr : typeof body?.to === 'string' ? body.to : hojeStr
-  const dryRun = !!body?.dryRun
-  // rebuild varre o PASSADO em background — nunca deve mexer na marca d'água do
-  // delta corrente, senão o delta acharia que já releu tudo até agora.
-  const skipWatermark = mode === 'rebuild'
 
-  let uploadId = ''
-  let inserted = 0
-  let salesDeleted = 0
+  // Trava atômica: só pega quem acha a linha livre (ou com trava vencida).
+  const vencida = new Date(Date.now() - LOCK_VENCIDO_MS).toISOString()
+  const { data: trava } = await sb.from('sync_state')
+    .update({ running: true, updated_at: startedAt })
+    .eq('key', 'v3-lock')
+    .or(`running.eq.false,updated_at.lt.${vencida}`)
+    .select('key')
+  if (!trava || trava.length === 0) {
+    return json({ ok: true, startedAt, emAndamento: true, salesInserted: 0, pending: 0, nota: 'outra rodada em andamento' })
+  }
 
+  const escrita = new Escrita(sb)
   try {
-    const todosMeses = janelasMensais(from, to)
+    const { data: cancRows } = await sb.from('vendas_canceladas').select('venda_numero')
+    const manual = new Set<number>((cancRows ?? []).map((r: { venda_numero: number }) => r.venda_numero))
 
-    // ── 1. Quais meses ler ──────────────────────────────────────────────────
-    let syncedSince: string | null = null
-    let aLer = todosMeses
-    let marcas: MarcaPorMes = {}
-    let pendentes = 0
-    let rebuild: { cursorMes: number; proximoMes: number; totalMeses: number; status: string } | null = null
+    const setorId = await idDoSetor(sb, monde)
+    const lista = await faseLista(sb, monde, escrita, manual)
+    const detalhe = await faseDetalhe(sb, monde, escrita, manual, setorId)
+    await escrita.fechar('success')
 
-    if (mode === 'rebuild') {
-      const { data: st } = await supabase
-        .from('sync_state').select('cursor_page, running, last_done_at')
-        .eq('key', REBUILD_STATE_KEY).maybeSingle()
-      let running = (st?.running as boolean) ?? false
-      let cursorMes = (st?.cursor_page as number) ?? 1
-      const force = !!body?.force
-      if (!running) {
-        const lastDone = st?.last_done_at ? new Date(st.last_done_at as string).getTime() : 0
-        const due = force || !lastDone || (Date.now() - lastDone) >= REBUILD_INTERVAL_DAYS * 86_400_000
-        if (!due) {
-          const proximoCiclo = new Date(lastDone + REBUILD_INTERVAL_DAYS * 86_400_000).toISOString()
-          return json({
-            ok: true, startedAt, mode, from, to,
-            rebuild: { status: 'skipped', reason: `próximo ciclo após ${proximoCiclo}`, cursorMes, totalMeses: todosMeses.length },
-          })
-        }
-        running = true
-        cursorMes = 1
-      }
-      if (cursorMes < 1 || cursorMes > todosMeses.length) cursorMes = 1
-      aLer = todosMeses.slice(cursorMes - 1, cursorMes - 1 + REBUILD_MONTHS_PER_RUN)
-      rebuild = {
-        cursorMes, proximoMes: cursorMes + aLer.length, totalMeses: todosMeses.length,
-        status: cursorMes === 1 ? 'started' : 'progress',
-      }
-    }
+    const agora = new Date().toISOString()
+    const [{ count: pendentes }, { count: cargaInicial }] = await Promise.all([
+      sb.from('monde_v3_vendas').select('*', { count: 'exact', head: true }).eq('prioridade', 0).lte('refresh_at', agora),
+      sb.from('monde_v3_vendas').select('*', { count: 'exact', head: true }).eq('prioridade', 1),
+    ])
 
-    if (mode === 'delta') {
-      const { data: st } = await supabase
-        .from('sync_state').select('last_done_at, note').eq('key', WATERMARK_KEY).maybeSingle()
-      const wmGlobal = st?.last_done_at as string | null
-      marcas = lerMarcas(st?.note as string | null)
-
-      if (wmGlobal || Object.keys(marcas).length > 0) {
-        // Só CONTAGEM (2 requisições por mês), não paginação completa.
-        const afetados: Array<{ from: string; to: string }> = []
-        for (const mes of todosMeses) {
-          const rotulo = mes.from.slice(0, 7)
-          const marcaDoMes = marcas[rotulo]
-          const base = marcaDoMes ?? wmGlobal
-          if (!base) { afetados.push(mes); continue }
-          // Mês COM marca própria já foi reconciliado inteiro: pergunta a partir de
-          // 1 ms depois da marca. Sem esse +1 ms o próprio registro que definiu a marca
-          // volta na contagem (o filtro é inclusivo) e o mês é redetectado para sempre —
-          // a fila nunca anda. Mês SEM marca usa o piso global com folga para trás,
-          // porque ali ainda pode haver registro não lido.
-          const desde = marcaDoMes
-            ? new Date(new Date(marcaDoMes).getTime() + 1).toISOString()
-            : new Date(new Date(base).getTime() - WATERMARK_OVERLAP_MS).toISOString()
-          if (!syncedSince || desde < syncedSince) syncedSince = desde
-          const [nv, nl] = await Promise.all([
-            contar({ resource: 'sales', from: mes.from, to: mes.to, synced_since: desde }, apiKey),
-            contar({ resource: 'products', from: mes.from, to: mes.to, synced_since: desde }, apiKey),
-          ])
-          if (nv > 0 || nl > 0) afetados.push(mes)
-        }
-        // Mais antigos primeiro: o atraso maior sai da fila antes.
-        afetados.sort((a, b) => a.from.localeCompare(b.from))
-        pendentes = Math.max(0, afetados.length - MAX_MESES_POR_RUN)
-        aLer = afetados.slice(0, MAX_MESES_POR_RUN)
-      }
-      // Sem marca nenhuma: primeiro run = reconciliação completa da janela.
-    }
-
-    if (aLer.length === 0) {
-      return json({
-        ok: true, startedAt, mode, from, to, syncedSince,
-        mesesLidos: 0, mesesPulados: [], vendasLidas: 0, linhasLidas: 0,
-        salesInserted: 0, salesDeleted: 0, pending: 0,
-        canceladasVenda: 0, canceladasProduto: 0, semLinhaAtiva: 0,
-        nota: "nada relido desde a última marca d'água",
-      })
-    }
-
-    // ── 2. Cancelamento MANUAL (contorno de junho/2026) ─────────────────────
-    const { data: cancRows } = await supabase.from('vendas_canceladas').select('venda_numero')
-    const canceladasManual = new Set(
-      (cancRows ?? []).map((r: { venda_numero: number }) => r.venda_numero),
-    )
-
-    // ── 3. Registro de upload ANTES de qualquer delete ──────────────────────
-    // Sem isto, uma morte entre apagar e inserir não deixa rastro nenhum — foi o que
-    // escondeu a perda de agosto/2026 até o dashboard zerar.
-    if (!dryRun) {
-      const { data: up, error: upErr } = await supabase
-        .from('uploads')
-        .insert({
-          nome_arquivo: `${FILENAME_PREFIX}${mode}-${new Date().toISOString().slice(0, 10)}`,
-          total_linhas: 0, linhas_inseridas: 0, linhas_atualizadas: 0,
-          // 'warning' = em andamento; a tabela só aceita success/warning/error.
-          alertas_qualidade: [], status: 'warning',
-        })
-        .select('id').single()
-      if (upErr || !up) throw new Error(`Erro ao registrar sync: ${upErr?.message}`)
-      uploadId = up.id
-    }
-
-    // ── 4. Um mês por vez ───────────────────────────────────────────────────
-    const mesesLidos: string[] = []
-    const mesesPulados: string[] = []
-    const affectedUploadIds = new Set<string>()
-    const todasDatas: string[] = []
-    let vendasLidas = 0, linhasLidas = 0
-    let canceladasVenda = 0, canceladasProduto = 0, semLinhaAtiva = 0, manualIgnoradas = 0
-    let maxSynced: string | null = null
-
-    for (const mes of aLer) {
-      const rotulo = mes.from.slice(0, 7)
-      const [vendas, linhas] = await Promise.all([
-        lerVendas(mes, apiKey),
-        lerLinhas(mes, apiKey),
-      ])
-      vendasLidas += vendas.length
-      linhasLidas += linhas.length
-
-      // TRAVA: vendas sem NENHUMA linha de produto = falha do feed `products`. Sem ela,
-      // toda venda do mês pareceria "sem produto ativo" e seria apagada. Foi assim que
-      // agosto/2026 sumiu.
-      if (vendas.length > 0 && linhas.length === 0) { mesesPulados.push(rotulo); continue }
-      if (vendas.length === 0) continue
-
-      let maxDoMes: string | null = null
-      for (const v of vendas) {
-        if (v.synced_at && (!maxSynced || v.synced_at > maxSynced)) maxSynced = v.synced_at
-        if (v.synced_at && (!maxDoMes || v.synced_at > maxDoMes)) maxDoMes = v.synced_at
-      }
-
-      const elegiveis = vendas.filter((v) => !canceladasManual.has(v.sale_number))
-      manualIgnoradas += vendas.length - elegiveis.length
-
-      const numeros = [...new Set(vendas.map((v) => v.sale_number))]
-      const produtoAnterior = new Map<number, string>()
-      for (const lote of chunk(numeros, CHUNK_NUMEROS)) {
-        const { data: rows } = await supabase
-          .from('vendas').select('venda_numero, upload_id, produto').in('venda_numero', lote)
-        for (const r of rows ?? []) {
-          if (r.upload_id) affectedUploadIds.add(r.upload_id)
-          if (r.produto && !produtoAnterior.has(r.venda_numero)) {
-            produtoAnterior.set(r.venda_numero, r.produto)
-          }
-        }
-      }
-
-      const c = construirLinhas(elegiveis, linhas, produtoAnterior)
-      canceladasVenda += c.canceladasVenda
-      canceladasProduto += c.canceladasProduto
-      semLinhaAtiva += c.semLinhaAtiva
-      for (const l of c.linhas) todasDatas.push(l.data_venda)
-
-      if (dryRun) { mesesLidos.push(rotulo); continue }
-
-      const porVenda = new Map<number, VendaRow[]>()
-      for (const l of c.linhas) {
-        const arr = porVenda.get(l.venda_numero)
-        if (arr) arr.push(l); else porVenda.set(l.venda_numero, [l])
-      }
-
-      // Apaga e insere no MESMO lote: morte súbita perde só este lote, que a próxima
-      // rodada refaz.
-      for (const lote of chunk(numeros, CHUNK_NUMEROS)) {
-        const { error: delErr } = await supabase.from('vendas').delete().in('venda_numero', lote)
-        if (delErr) throw new Error(`Erro ao apagar lote (${rotulo}): ${delErr.message}`)
-        salesDeleted += lote.length
-
-        const novas = lote.flatMap((n) =>
-          (porVenda.get(n) ?? []).map((l) => ({ ...l, upload_id: uploadId })))
-        for (let i = 0; i < novas.length; i += INSERT_BATCH) {
-          const { error: insErr } = await supabase.from('vendas').insert(novas.slice(i, i + INSERT_BATCH))
-          if (insErr) throw new Error(`Erro ao inserir lote (${rotulo}): ${insErr.message}`)
-        }
-        inserted += novas.length
-      }
-
-      // Mês reconciliado: grava a marca dele para não ser redetectado na próxima
-      // rodada. É isto que faz a fila andar quando não cabe tudo numa invocação.
-      if (maxDoMes) marcas[rotulo] = maxDoMes
-      mesesLidos.push(rotulo)
-    }
-
-    if (dryRun) {
-      return json({
-        ok: true, startedAt, mode, from, to, syncedSince, dryRun: true,
-        mesesLidos: mesesLidos.length, mesesPulados,
-        vendasLidas, linhasLidas, salesInserted: 0, salesDeleted: 0, pending: 0,
-        canceladasVenda, canceladasProduto, semLinhaAtiva, canceladasManual: manualIgnoradas,
-      })
-    }
-
-    // ── 5. Fecha o upload, faxina e marca d'água ────────────────────────────
-    await supabase.from('uploads')
-      .update({ status: 'success', total_linhas: inserted, linhas_inseridas: inserted, linhas_atualizadas: salesDeleted })
-      .eq('id', uploadId)
-
-    await cleanOrphans(supabase, [...affectedUploadIds], uploadId)
-
-    // Grava as marcas POR MÊS dos meses efetivamente reconciliados. Mês pulado pela
-    // trava não recebe marca — continua na fila até ser lido inteiro. Nunca roda em
-    // modo rebuild: ele varre o passado e não pode mexer na marca d'água do delta.
-    if (!skipWatermark && mesesLidos.length > 0) {
-      const resumo = `${mode}: ${mesesLidos.join(', ')} · ${inserted} linhas · ` +
-        `${canceladasVenda} cancelada(s)` +
-        (mesesPulados.length ? ` · PULADOS: ${mesesPulados.join(', ')}` : '') +
-        (pendentes ? ` · ${pendentes} mês(es) na fila` : '')
-      await supabase.from('sync_state').upsert({
-        key: WATERMARK_KEY, cursor_page: 1, running: false,
-        // `last_done_at` vira só o piso para mês ainda sem marca própria.
-        last_done_at: maxSynced ?? null,
-        note: serializarMarcas(marcas, resumo),
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'key' })
-    }
-
-    // Avança o cursor do rebuild (chave própria, ver constantes REBUILD_*). Roda
-    // mesmo se algum mês da fatia caiu na trava (semLinhaAtiva) — sem isso, um mês
-    // com falha temporária do feed products travaria o cursor para sempre.
-    if (mode === 'rebuild' && rebuild) {
-      const nowISO = new Date().toISOString()
-      const done = rebuild.proximoMes > rebuild.totalMeses
-      if (done) {
-        await supabase.from('sync_state').update({
-          running: false, cursor_page: 1, last_done_at: nowISO,
-          note: `ciclo completo: ${rebuild.totalMeses} meses desde ${from}`,
-          updated_at: nowISO,
-        }).eq('key', REBUILD_STATE_KEY)
-        rebuild.status = 'completed'
-      } else {
-        await supabase.from('sync_state').update({
-          running: true, cursor_page: rebuild.proximoMes,
-          note: `mês ${rebuild.cursorMes}→${rebuild.proximoMes - 1} de ${rebuild.totalMeses}; +${inserted} linhas, ${canceladasVenda} cancelada(s)`,
-          updated_at: nowISO,
-        }).eq('key', REBUILD_STATE_KEY)
-      }
-    }
-
-    const datas = todasDatas.sort()
     return json({
-      ok: true, startedAt, finishedAt: new Date().toISOString(),
-      mode, from, to, syncedSince,
-      mesesLidos: mesesLidos.length, mesesPulados,
-      vendasLidas, linhasLidas,
-      salesInserted: inserted, salesDeleted, pending: pendentes,
-      canceladasVenda, canceladasProduto, semLinhaAtiva, canceladasManual: manualIgnoradas,
-      watermark: maxSynced,
-      dateRange: datas.length ? { min: datas[0], max: datas[datas.length - 1] } : null,
-      rebuild,
+      ok: true, startedAt, finishedAt: agora, chamadasMonde: monde.chamadas,
+      lista, detalhe,
+      salesInserted: escrita.inseridas, salesDeleted: escrita.apagadas,
+      // `pending` é o que o botão mostra: só venda nova/alterada ainda não aberta.
+      pending: pendentes ?? 0, cargaInicial: cargaInicial ?? 0,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[monde-sync] ERRO:', msg)
-    // Deixa o rastro: o registro fica como 'error' com o que chegou a ser gravado.
-    if (uploadId) {
-      await supabase.from('uploads')
-        .update({ status: 'error', total_linhas: inserted, linhas_inseridas: inserted, linhas_atualizadas: salesDeleted })
-        .eq('id', uploadId)
-    }
-    return json({ ok: false, startedAt, error: msg, salesInserted: inserted, salesDeleted }, 500)
+    await escrita.fechar('error').catch(() => {})
+    return json({ ok: false, startedAt, error: msg, salesInserted: escrita.inseridas, salesDeleted: escrita.apagadas }, 500)
+  } finally {
+    await sb.from('sync_state').update({ running: false, updated_at: new Date().toISOString() }).eq('key', 'v3-lock')
   }
 })

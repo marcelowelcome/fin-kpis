@@ -1,5 +1,5 @@
 import type { QualityAlert, QualityAlertExemplo } from '@/lib/schemas'
-import type { SondaQualidade } from '@/lib/monde-feed'
+import type { SondaQualidade } from '@/lib/monde-indice'
 import { formatBRL, formatDate } from '@/lib/format'
 
 /**
@@ -17,22 +17,20 @@ import { formatBRL, formatDate } from '@/lib/format'
  * ALARME DE REGRESSÃO: se acenderem, a API voltou a omitir dado — não é mais "o de
  * sempre", é notícia.
  *
- * E foram acrescentados os três alarmes que realmente faltavam, montados sobre os
- * sinais que a equipe da API expôs (`total` nas listagens e `synced_at` como frescor):
- *   CANCELADA_NO_BANCO — venda que a API reporta cancelada e continua somando aqui.
- *                        Era o erro mais caro: R$ 45.079,69 em 2026, invisível porque a
- *                        listagem sem `from`/`to` não devolve venda cancelada.
- *   DIVERGENCIA_API    — contagem de linhas ativas banco × API. Pega cancelamento
- *                        parcial e venda que ficou de fora, sem baixar linha nenhuma.
- *   ESPELHO_ATRASADO   — o espelho não relê de hora em hora como se supunha (medido:
- *                        dois backfills em massa, 52% num dia e 36% em outro). Dado
- *                        velho invalida a leitura, e a causa é do lado deles.
+ * Os três alarmes de divergência comparam `vendas` com o índice que a Edge Function
+ * `monde-sync` mantém a partir da API oficial do Monde (v3, desde 2026-09-28; antes era
+ * o espelho do TTARS, desligado em 02/10/2026):
+ *   CANCELADA_NO_BANCO — venda que o Monde reporta cancelada e continua somando aqui.
+ *   DIVERGENCIA_API    — venda com produto ativo no Monde que falta aqui, ou venda sem
+ *                        produto ativo que sobrou aqui.
+ *   ESPELHO_ATRASADO   — o sync parou de ler a lista do Monde, ou venda nova/alterada
+ *                        está há mais de 1 h esperando o detalhe.
  */
 
 const MAX_EXEMPLOS = 5
 
-/** Abaixo deste percentual de vendas relidas na janela de frescor, acende o alarme. */
-const FRESCOR_MINIMO_PCT = 20
+/** Sem leitura da lista do Monde há mais que isto, o sync está parado. */
+const LISTA_ATRASADA_HORAS = 2
 
 export interface SyncQualityRow {
   venda_numero: number
@@ -98,41 +96,45 @@ export function checkSyncQuality(
       })
     }
 
-    // 2. Contagem de linhas ativas: banco × API. Diferença revela cancelamento parcial
-    //    e venda que ficou de fora, sem precisar baixar as linhas.
-    const linhasBanco = rows.length
-    const diff = linhasBanco - sonda.linhasAtivasApi
-    if (Math.abs(diff) > 0 && sonda.linhasAtivasApi > 0) {
-      const sobrando = diff > 0
+    // 2. Banco × último detalhe lido do Monde, venda a venda.
+    const noBanco = new Set(rows.map((r) => r.venda_numero))
+    const faltando = sonda.comAtivoNaApi.filter((n) => !noBanco.has(n))
+    const semAtivo = new Set(sonda.semAtivoNaApi)
+    const sobrando = porVenda(rows.filter((r) => semAtivo.has(r.venda_numero)))
+    const diff = faltando.length + sobrando.length
+    if (diff > 0) {
+      const partes: string[] = []
+      if (faltando.length) partes.push(`${faltando.length} com produto ativo no Monde faltando aqui`)
+      if (sobrando.length) partes.push(`${sobrando.length} sem produto ativo no Monde sobrando aqui`)
       alerts.push({
         tipo: 'DIVERGENCIA_API',
-        severidade: Math.abs(diff) > 50 ? 'CRITICO' : 'ATENCAO',
-        quantidade: Math.abs(diff),
-        descricao:
-          `Banco tem ${linhasBanco.toLocaleString('pt-BR')} linhas ativas e a API tem ` +
-          `${sonda.linhasAtivasApi.toLocaleString('pt-BR')} — ${Math.abs(diff).toLocaleString('pt-BR')} ` +
-          (sobrando
-            ? 'sobrando aqui (provável cancelamento não propagado)'
-            : 'faltando aqui (venda não sincronizada)'),
+        severidade: diff > 10 ? 'CRITICO' : 'ATENCAO',
+        quantidade: diff,
+        descricao: `Banco × Monde: ${partes.join(' e ')}`,
+        linhas_afetadas: [...faltando, ...sobrando.map((s) => s.venda_numero)],
       })
     }
 
-    // 3. Frescor do espelho. `synced_at` é o instante em que ELES leram do Monde: se
-    //    quase nada foi relido na janela, o dado do dia pode estar velho na origem.
-    if (sonda.vendasNaApi > 0) {
-      const pct = (sonda.vendasRelidas / sonda.vendasNaApi) * 100
-      if (pct < FRESCOR_MINIMO_PCT) {
-        alerts.push({
-          tipo: 'ESPELHO_ATRASADO',
-          severidade: 'ATENCAO',
-          quantidade: 1,
-          descricao:
-            `Só ${pct.toFixed(0)}% das vendas do ano foram relidas do Monde nas últimas ` +
-            `${sonda.horas}h (${sonda.vendasRelidas.toLocaleString('pt-BR')} de ` +
-            `${sonda.vendasNaApi.toLocaleString('pt-BR')}) — cancelamento ou alteração ` +
-            `recente pode ainda não ter chegado ao espelho`,
-        })
+    // 3. Sync parado: lista sem leitura recente ou fila de vendas novas empacada.
+    const horasSemLista = sonda.listaLidaEm
+      ? (Date.now() - new Date(sonda.listaLidaEm).getTime()) / 3_600_000
+      : Infinity
+    if (horasSemLista > LISTA_ATRASADA_HORAS || sonda.filaAtrasada > 0) {
+      const motivos: string[] = []
+      if (horasSemLista > LISTA_ATRASADA_HORAS) {
+        motivos.push(Number.isFinite(horasSemLista)
+          ? `lista do Monde sem leitura há ${horasSemLista.toFixed(0)}h`
+          : 'lista do Monde nunca lida')
       }
+      if (sonda.filaAtrasada > 0) {
+        motivos.push(`${sonda.filaAtrasada} venda(s) nova(s)/alterada(s) esperando há mais de 1h`)
+      }
+      alerts.push({
+        tipo: 'ESPELHO_ATRASADO',
+        severidade: 'ATENCAO',
+        quantidade: 1,
+        descricao: `Sync com o Monde atrasado: ${motivos.join('; ')} — alteração recente pode ainda não estar no dashboard`,
+      })
     }
   }
 
@@ -157,8 +159,8 @@ export function checkSyncQuality(
     })
   }
 
-  // Produto sem rótulo. Com os feeds isso só acontece se aparecer um `product_kind`
-  // novo que não está em KIND_PRODUTO (lib/monde-feed.ts) — ou seja, é acionável.
+  // Produto sem rótulo. Só acontece se aparecer um tipo de produto novo que não está em
+  // KIND_PRODUTO (supabase/functions/monde-sync) — ou seja, é acionável.
   const semProduto = porVenda(rows.filter((r) => !r.produto && SETORES_KPI.has(r.setor_grupo)))
   if (semProduto.length > 0) {
     const valorTotal = semProduto.reduce((s, v) => s + v.valor, 0)
@@ -166,14 +168,14 @@ export function checkSyncQuality(
       tipo: 'PRODUTO_NULO',
       severidade: 'ATENCAO',
       quantidade: semProduto.length,
-      descricao: `${semProduto.length} venda(s) sem produto identificado (${formatBRL(valorTotal)}) — contam no faturamento do setor, mas somem dos cards de Contratos/Taxas/subcategoria. Provável product_kind novo faltando em KIND_PRODUTO`,
+      descricao: `${semProduto.length} venda(s) sem produto identificado (${formatBRL(valorTotal)}) — contam no faturamento do setor, mas somem dos cards de Contratos/Taxas/subcategoria. Provável tipo de produto novo faltando em KIND_PRODUTO`,
       exemplos: semProduto.slice(0, MAX_EXEMPLOS).map(({ row }) =>
-        criarExemplo(row, `${row.setor_grupo} · nem product_name_resolvido nem rótulo por kind`)
+        criarExemplo(row, `${row.setor_grupo} · sem nome no catálogo nem rótulo por tipo`)
       ),
     })
   }
 
-  // Fornecedor: hoje 100% resolvido pela API e ainda sem leitor no dashboard, então
+  // Fornecedor: resolvido pelo sync via /people e ainda sem leitor no dashboard, então
   // segue como INFO — serve de sinal de que o feed mudou, não de problema de negócio.
   const semFornecedor = porVenda(rows.filter((r) => !r.fornecedor))
   if (semFornecedor.length > 0) {
@@ -182,16 +184,16 @@ export function checkSyncQuality(
       tipo: 'FORNECEDOR_NULO',
       severidade: 'INFO',
       quantidade: semFornecedor.length,
-      descricao: `${semFornecedor.length} venda(s) sem fornecedor (${formatBRL(valorTotal)}) — nenhum card lê esse campo hoje; serve como sinal de que supplier_name_resolvido regrediu`,
+      descricao: `${semFornecedor.length} venda(s) sem fornecedor (${formatBRL(valorTotal)}) — nenhum card lê esse campo hoje; serve como sinal de que o fornecedor deixou de vir do Monde`,
       exemplos: semFornecedor.slice(0, MAX_EXEMPLOS).map(({ row }) =>
-        criarExemplo(row, `${row.produto ?? '(produto não identificado)'} · supplier_name_resolvido vazio`)
+        criarExemplo(row, `${row.produto ?? '(produto não identificado)'} · fornecedor vazio no Monde`)
       ),
     })
   }
 
   // Contrato de casamento sem o nome do casal. Foi por aqui que passou 13 dias de
   // regressão sem ninguém ver (o campo `approver` do raw sumiu em 2026-08-14 e a coluna
-  // ficou 100% nula). Agora vem de operation_product_name_resolvido.
+  // ficou 100% nula). Agora vem do nome, no catálogo, da `operation` da venda.
   const contratoSemOperacao = porVenda(
     rows.filter((r) => (r.produto ?? '').toLowerCase() === 'contrato de casamento' && !r.operacao)
   )
@@ -202,7 +204,7 @@ export function checkSyncQuality(
       quantidade: contratoSemOperacao.length,
       descricao: `${contratoSemOperacao.length} contrato(s) sem nome do casal — coluna "Operação Própria" fica em branco no card de Contratos`,
       exemplos: contratoSemOperacao.slice(0, MAX_EXEMPLOS).map(({ row }) =>
-        criarExemplo(row, 'operation_product_name_resolvido vazio')
+        criarExemplo(row, 'operação própria sem nome no catálogo do Monde')
       ),
     })
   }
@@ -217,7 +219,7 @@ export function checkSyncQuality(
       quantidade: semVendedor.length,
       descricao: `${semVendedor.length} venda(s) sem vendedor atribuído (${formatBRL(valorTotal)}) — somem do card Top Vendedores`,
       exemplos: semVendedor.slice(0, MAX_EXEMPLOS).map(({ row }) =>
-        criarExemplo(row, `${row.setor_grupo} · travel_agent_name vazio no Monde`)
+        criarExemplo(row, `${row.setor_grupo} · vendedor vazio no Monde`)
       ),
     })
   }

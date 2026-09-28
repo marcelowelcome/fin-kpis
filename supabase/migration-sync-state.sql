@@ -1,7 +1,8 @@
 -- =============================================================
 -- Migration: sync_state
 -- Cursor de progresso do rebuild incremental da base Monde (últimos 3 anos).
--- Aplicar no Supabase (SQL Editor) antes de ativar o cron /api/cron/monde-rebuild.
+-- Histórico: os cursores 'rebuild-3y' e 'feed-delta' eram do sync pelo TTARS (até
+-- 2026-09-28). O sync v3 usa 'v3-lista' e 'v3-lock' (supabase/migration-monde-v3.sql).
 -- =============================================================
 
 CREATE TABLE IF NOT EXISTS sync_state (

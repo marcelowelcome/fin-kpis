@@ -3,7 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase'
 import { jsonError, todayISO } from '@/lib/api-utils'
 import { calcScoreFromAlerts } from '@/lib/data-quality'
 import { checkSyncQuality, type SyncQualityRow } from '@/lib/sync-quality'
-import { sondarQualidade, type SondaQualidade } from '@/lib/monde-feed'
+import { sondarQualidade, type SondaQualidade } from '@/lib/monde-indice'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -15,7 +15,7 @@ const COLS = 'venda_numero, data_venda, vendedor, setor_grupo, produto, forneced
  * Exclui vendas marcadas como excluídas — mesmo critério do dashboard.
  *
  * Legado: desde 2026-08-27 o sync só GRAVA linha de produto ativa de venda não
- * cancelada (a régua é aplicada na escrita, em lib/monde-sync-feed.ts), então nenhuma
+ * cancelada (a régua é aplicada na escrita, na Edge Function monde-sync), então nenhuma
  * linha cancelada entra na tabela. Este filtro é defesa em profundidade para linhas
  * antigas vindas do Excel; hoje não remove nada.
  */
@@ -66,8 +66,8 @@ export async function GET(_request: NextRequest) {
     const supabase = getSupabaseServer()
     const ano = todayISO().slice(0, 4)
 
-    // A sondagem são 4 requisições que leem só o campo `total` do envelope (page_size=1)
-    // mais a lista de canceladas, que é pequena. Se a API estiver fora, o monitor
+    // A sondagem lê o índice `monde_v3_vendas`, que a Edge Function monde-sync mantém a
+    // partir da API do Monde (o Vercel não tem a chave do Monde). Se falhar, o monitor
     // degrada para os alarmes de regressão em vez de derrubar a página.
     let sonda: SondaQualidade | null = null
     let sondaErro: string | null = null

@@ -1,18 +1,22 @@
 /**
- * POST /api/monde/sync  — sincroniza vendas Monde → banco (chamada manual)
+ * POST /api/monde/sync  — dispara uma rodada da Edge Function `monde-sync`
  * DELETE /api/monde/sync — remove TODOS os dados importados via API Monde
+ *
+ * O sync lê a API oficial do Monde (v3) e roda só no Supabase: a chave do Monde
+ * (MONDE_V3_API_KEY) abre o financeiro inteiro e existe apenas como secret da Edge
+ * Function. Esta rota não fala com o Monde — só repassa a chamada.
  */
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase'
-import { runMondeSync, runMondeSyncDelta, MONDE_FILENAME_PREFIX } from '@/lib/monde-sync-runner'
 import { jsonError } from '@/lib/api-utils'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
-// 300s como o cron: a varredura de páginas + escrita no banco pode passar de 60s.
-// Com o teto antigo de 60 a função era morta no meio e o cliente via "Failed to fetch".
-export const maxDuration = 300
+// Uma rodada da Edge Function leva até ~115 s.
+export const maxDuration = 180
+
+const MONDE_FILENAME_PREFIX = 'monde-api-'
 
 // ─── DELETE: remove todos os dados Monde do banco ───────────────────────────
 
@@ -47,31 +51,19 @@ export async function DELETE() {
 
 // ─── POST: sincronizar manualmente ──────────────────────────────────────────
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
-    const body = await request.json().catch(() => ({}))
-
-    // Sync DELTA: usa a marca d'água `synced_since` para descobrir quais MESES o
-    // espelho releu e reconcilia só esses meses (por inteiro, para venda e linha não
-    // ficarem descasadas). `dryRun:true` só relata, sem gravar.
-    if (body.mode === 'delta' || body.delta) {
-      const result = await runMondeSyncDelta({
-        from: typeof body.from === 'string' ? body.from : undefined,
-        to: typeof body.to === 'string' ? body.to : undefined,
-        cutoff: typeof body.cutoff === 'string' ? body.cutoff : undefined,
-        syncedSince: typeof body.syncedSince === 'string' ? body.syncedSince : undefined,
-        dryRun: !!body.dryRun,
-      })
-      return NextResponse.json({ result })
-    }
-
-    const result = await runMondeSync({
-      mode: body.mode === 'full' ? 'full' : 'incremental',
-      from: typeof body.from === 'string' ? body.from : undefined,
-      to: typeof body.to === 'string' ? body.to : undefined,
-      cutoff: typeof body.cutoff === 'string' ? body.cutoff : undefined,
-      dryRun: !!body.dryRun,
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+    const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/monde-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: anon, Authorization: `Bearer ${anon}` },
+      body: '{}',
+      cache: 'no-store',
     })
+    const result = await res.json().catch(() => null)
+    if (!res.ok || result?.ok === false) {
+      return jsonError('SYNC_ERROR', String(result?.error ?? `Edge Function respondeu ${res.status}`), 502)
+    }
     return NextResponse.json({ result })
   } catch (err) {
     console.error('Monde sync error:', err)

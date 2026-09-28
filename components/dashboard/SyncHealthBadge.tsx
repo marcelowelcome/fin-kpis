@@ -19,9 +19,9 @@ interface QualidadeResponse {
  * DIVERGENCIA_API) sobem para vermelho — os demais (produto/fornecedor nulo) não
  * afetam faturamento/receita, então não valem susto aqui.
  *
- * O vermelho já é a autocorreção falando: desde 2026-09-15 há dois pg_cron diários
- * (rebuild dos últimos 3 anos + reconcile do mês atual/anterior) que corrigem esse
- * tipo de divergência sozinhos — por isso a mensagem promete correção, não só alerta.
+ * O vermelho já é a autocorreção falando: o pg_cron roda a Edge Function monde-sync a
+ * cada 5 min, e ela relê a lista do Monde e reabre venda alterada ou cancelada — por
+ * isso a mensagem promete correção, não só alerta.
  */
 const TIPOS_FINANCEIROS = new Set(['CANCELADA_NO_BANCO', 'DIVERGENCIA_API'])
 
