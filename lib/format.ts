@@ -64,6 +64,12 @@ export function getInitials(name: string): string {
     .join('')
 }
 
+/** Primeiro + último nome (ex: "Camila Montanhini Seixas" → "Camila Seixas") */
+export function getShortName(name: string): string {
+  const parts = name.split(' ').filter((p) => p.length > 0)
+  return parts.length > 2 ? `${parts[0]} ${parts[parts.length - 1]}` : parts.join(' ')
+}
+
 /** Cores de fundo para avatars de vendedores (cicla por index) */
 export const AVATAR_COLORS = [
   'bg-blue-100 text-blue-700',

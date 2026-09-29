@@ -424,10 +424,9 @@ export function DashboardClient() {
               />
             </KPICard>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <TopVendedores vendedores={data?.topVendedores?.trips ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} />
-              <TopProdutos produtos={data?.topProdutos?.trips ?? []} loading={loading} />
-            </div>
+            {/* Vendedores com meta de receita (as metas de Trips), lado a lado em largura total */}
+            <TopVendedores vendedores={data?.topVendedores?.trips ?? []} loading={loading} activeVendedor={vendedorFilter} onSelect={setVendedorFilter} layout="colunas" somenteComMeta="receita" />
+            <TopProdutos produtos={data?.topProdutos?.trips ?? []} loading={loading} />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
