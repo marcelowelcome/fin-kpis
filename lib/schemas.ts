@@ -459,3 +459,216 @@ export interface ParseResult {
   totalLinhas: number
   score: number
 }
+
+// =============================================================
+// Auditoria de receitas (Admin → Auditoria)
+// Espelho de TIPOS / MOTIVOS em supabase/functions/auditoria-receitas/motor.ts:
+// mudou lá, mude aqui.
+// =============================================================
+
+/** O que mudou na venda (fato tirado da comparação entre duas conferências). */
+export const AUDITORIA_TIPOS = [
+  'VENDA_CANCELADA', 'CANCELAMENTO_MANUAL', 'VENDA_EXCLUIDA', 'PRODUTOS_CANCELADOS',
+  'PRODUTO_CANCELADO', 'PRODUTO_INCLUIDO', 'TROCA_PRODUTO', 'ALTERACAO_VALOR',
+  'AJUSTE_RECEITA', 'MUDANCA_DATA', 'MUDANCA_VENDEDOR', 'MUDANCA_SETOR',
+  'RECLASSIFICACAO_PRODUTO', 'VENDA_REABERTA', 'VENDA_REFECHADA', 'FECHAMENTO_TARDIO',
+  'LANCAMENTO_RETROATIVO', 'VENDA_REATIVADA', 'DIVERGENCIA_SYNC',
+] as const
+export type AuditoriaTipo = (typeof AUDITORIA_TIPOS)[number]
+
+export const AUDITORIA_TIPO_LABELS: Record<AuditoriaTipo, string> = {
+  VENDA_CANCELADA: 'Venda cancelada',
+  CANCELAMENTO_MANUAL: 'Cancelamento manual',
+  VENDA_EXCLUIDA: 'Venda excluída',
+  PRODUTOS_CANCELADOS: 'Todos os produtos cancelados',
+  PRODUTO_CANCELADO: 'Produto cancelado',
+  PRODUTO_INCLUIDO: 'Produto incluído',
+  TROCA_PRODUTO: 'Troca de produto',
+  ALTERACAO_VALOR: 'Valor alterado',
+  AJUSTE_RECEITA: 'Receita ajustada',
+  MUDANCA_DATA: 'Data alterada',
+  MUDANCA_VENDEDOR: 'Vendedor alterado',
+  MUDANCA_SETOR: 'Setor alterado',
+  RECLASSIFICACAO_PRODUTO: 'Produto reclassificado',
+  VENDA_REABERTA: 'Venda reaberta',
+  VENDA_REFECHADA: 'Venda fechada de novo',
+  FECHAMENTO_TARDIO: 'Fechamento tardio',
+  LANCAMENTO_RETROATIVO: 'Lançamento retroativo',
+  VENDA_REATIVADA: 'Venda reativada',
+  DIVERGENCIA_SYNC: 'Divergência do sync',
+}
+
+/** Por que mudou (hipótese sugerida pelo motor e confirmada/corrigida na revisão). */
+export const AUDITORIA_MOTIVOS = [
+  'CANCELAMENTO_CLIENTE', 'REMARCACAO_REEMISSAO', 'AJUSTE_COMISSAO', 'DESCONTO_NEGOCIACAO',
+  'TAXA_FEE', 'VARIACAO_CAMBIAL', 'CORRECAO_LANCAMENTO', 'DUPLICIDADE',
+  'VENDA_COMPLEMENTAR', 'REATRIBUICAO', 'LANCAMENTO_ATRASADO', 'FALHA_INTEGRACAO', 'OUTRO',
+] as const
+export type AuditoriaMotivo = (typeof AUDITORIA_MOTIVOS)[number]
+
+export const AUDITORIA_MOTIVO_LABELS: Record<AuditoriaMotivo, string> = {
+  CANCELAMENTO_CLIENTE: 'Cancelamento / desistência do cliente',
+  REMARCACAO_REEMISSAO: 'Remarcação, troca ou reemissão',
+  AJUSTE_COMISSAO: 'Ajuste de comissão / incentivo do fornecedor',
+  DESCONTO_NEGOCIACAO: 'Desconto ou renegociação com o cliente',
+  TAXA_FEE: 'Taxa ou fee incluída/removida',
+  VARIACAO_CAMBIAL: 'Variação cambial / tarifa',
+  CORRECAO_LANCAMENTO: 'Correção de lançamento',
+  DUPLICIDADE: 'Lançamento duplicado removido',
+  VENDA_COMPLEMENTAR: 'Serviço adicional vendido depois',
+  REATRIBUICAO: 'Venda transferida de vendedor/setor',
+  LANCAMENTO_ATRASADO: 'Lançamento ou fechamento atrasado',
+  FALHA_INTEGRACAO: 'Falha de integração (não é alteração real)',
+  OUTRO: 'Outro',
+}
+
+export const AUDITORIA_REVISOES = ['pendente', 'confirmada', 'corrigida'] as const
+export type AuditoriaRevisao = (typeof AUDITORIA_REVISOES)[number]
+
+export interface AuditoriaProduto {
+  produto: string | null
+  fornecedor: string | null
+  /** Só em 'reclassificado': o nome de antes. */
+  produto_antes?: string | null
+  fornecedor_antes?: string | null
+  mudanca: 'igual' | 'alterado' | 'reclassificado' | 'cancelado' | 'incluido' | 'saiu'
+  valor_antes: number
+  valor_depois: number
+  receita_antes: number
+  receita_depois: number
+}
+
+/** De onde veio o motivo sugerido: a regra e as revisões de casos parecidos. */
+export interface AuditoriaBaseAprendizado {
+  chave: string | null
+  descricao: string | null
+  revisoes: number
+  votos: Record<string, number>
+  regra: Record<string, number>
+  aprendido: boolean
+}
+
+/** Uma venda alterada numa conferência. Receita/valor são os do relatório de Fechadas. */
+export interface AuditoriaAlteracao {
+  id: number
+  execucao_id: number | null
+  detectado_em: string
+  venda_numero: number
+  data_venda: string | null
+  data_venda_antes: string | null
+  situacao: string | null
+  situacao_antes: string | null
+  vendedor: string | null
+  vendedor_antes: string | null
+  setor_grupo: string | null
+  setor_grupo_antes: string | null
+  setor_bruto: string | null
+  pagante: string | null
+  receita_antes: number
+  receita_depois: number
+  delta_receita: number
+  valor_antes: number
+  valor_depois: number
+  delta_valor: number
+  tipo: AuditoriaTipo
+  produtos: AuditoriaProduto[]
+  explicacao: string
+  evidencias: string[]
+  motivo_sugerido: AuditoriaMotivo
+  confianca: number
+  base_aprendizado: AuditoriaBaseAprendizado | null
+  chaves: string[]
+  revisao: AuditoriaRevisao
+  motivo_real: AuditoriaMotivo | null
+  nota: string | null
+  revisado_por: string | null
+  revisado_em: string | null
+}
+
+export interface AuditoriaTotalMes {
+  receita: number
+  valor: number
+  vendas: number
+  linhas: number
+  setores: Record<string, number>
+}
+
+export interface AuditoriaExecucao {
+  id: number
+  data_ref: string
+  origem: 'cron' | 'manual'
+  status: 'rodando' | 'ok' | 'baseline' | 'erro'
+  iniciado_em: string
+  finalizado_em: string | null
+  janela_inicio: string | null
+  vendas_fechadas: number | null
+  linhas_fechadas: number | null
+  receita_fechada: number | null
+  valor_fechado: number | null
+  alteracoes: number | null
+  impacto_receita: number | null
+  vendas_novas: number | null
+  receita_novas: number | null
+  totais: Record<string, AuditoriaTotalMes> | null
+  erro: string | null
+}
+
+export interface AuditoriaGrupo {
+  chave: string
+  n: number
+  impacto: number
+  quedas: number
+  altas: number
+}
+
+export interface AuditoriaResumo {
+  total: number
+  impacto: number
+  somaQuedas: number
+  somaAltas: number
+  quedas: number
+  altas: number
+  pendentes: number
+  porSetor: AuditoriaGrupo[]
+  porVendedor: AuditoriaGrupo[]
+  porTipo: AuditoriaGrupo[]
+}
+
+/** Quanto o motivo sugerido acertou, entre as alterações já revisadas. */
+export interface AuditoriaPrecisao {
+  revisadas: number
+  acertos: number
+  precisao: number | null
+  porSemana: { semana: string; revisadas: number; acertos: number; precisao: number }[]
+  porMotivo: { motivo: AuditoriaMotivo; sugeridas: number; acertos: number; precisao: number }[]
+}
+
+/** Um contexto em que as revisões já ensinaram um motivo ao motor. */
+export interface AuditoriaPadrao {
+  chave: string
+  descricao: string
+  revisoes: number
+  motivo: AuditoriaMotivo
+  share: number
+  nota: string | null
+}
+
+export interface AuditoriaResponse {
+  dias: number
+  alteracoes: AuditoriaAlteracao[]
+  execucoes: AuditoriaExecucao[]
+  precisao: AuditoriaPrecisao
+  padroes: AuditoriaPadrao[]
+}
+
+export const AuditoriaAcaoSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('revisar'),
+    id: z.number().int().positive(),
+    motivo: z.enum(AUDITORIA_MOTIVOS),
+    nota: z.string().trim().max(500).optional(),
+  }),
+  z.object({ action: z.literal('desfazer'), id: z.number().int().positive() }),
+  z.object({ action: z.literal('executar') }),
+])
+export type AuditoriaAcao = z.infer<typeof AuditoriaAcaoSchema>

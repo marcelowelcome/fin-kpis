@@ -36,6 +36,8 @@ fin-kpis/
 │   ├── metas/page.tsx              # Gestão de metas mensais
 │   ├── metas-vendedor/page.tsx     # Metas individuais por vendedor
 │   ├── qualidade/page.tsx          # Painel de qualidade de dados
+│   ├── admin/                      # Abas Usuários | Auditoria (layout.tsx com as abas)
+│   │   └── auditoria/page.tsx      # Auditoria diária de receitas (ver 3.5)
 │   ├── login/page.tsx              # Tela de login
 │   ├── layout.tsx                  # Layout raiz (sidebar + content)
 │   ├── error.tsx                   # Error boundary
@@ -54,6 +56,7 @@ fin-kpis/
 │       │   ├── route.ts            # GET + POST: CRUD metas por vendedor
 │       │   └── vendedores/route.ts # GET: autocomplete nomes vendedores
 │       ├── qualidade/route.ts      # GET: score + timeline (usa calcScoreFromAlerts)
+│       ├── admin/auditoria/route.ts # GET: alterações + precisão | POST: revisar/desfazer/executar
 │       └── vendas/route.ts         # GET: listagem filtrada para drill-down
 │
 ├── lib/
@@ -65,6 +68,7 @@ fin-kpis/
 │   ├── data-quality.ts             # Qualidade + scoring (calcScoreFromAlerts)
 │   ├── format.ts                   # Formatadores BRL, %, data, cores, getInitials, AVATAR_COLORS
 │   ├── api-utils.ts                # Shared API helpers: jsonError(), getAuthUser(), todayISO()
+│   ├── auditoria.ts                # Resumos da auditoria (impacto, precisão, padrões aprendidos)
 │   └── sidebar-context.tsx         # Context provider para sidebar state
 │
 ├── components/
@@ -194,6 +198,26 @@ CREATE TABLE vendor_goals (
 -- tipo_meta: 'fat' = meta de faturamento, 'receita' = meta de receita.
 -- Usado no dashboard para enriquecer TopVendedores com meta individual.
 ```
+
+### 3.5 Auditoria de receitas (Admin → Auditoria)
+Conferência diária das vendas **Fechadas** dos últimos 6 meses (do dia 1º de 6 meses atrás
+até hoje), incluindo produto e venda cancelada. Migração: `supabase/migration-auditoria.sql`.
+
+- **Edge Function `auditoria-receitas`** (pg_cron `auditoria-receitas-diaria`, de hora em hora
+  das 06:15 às 11:15 BRT; só a primeira do dia confere, as outras saem na hora). Lê `vendas`,
+  compara cada venda com a foto anterior e grava o que mudou. Não fala com o Monde: o que o
+  Monde diz hoje (status, produtos ativos, receita) vem do índice `monde_v3_vendas`.
+  `motor.ts` é o cálculo puro (detecção + motivo); `index.ts` lê/grava.
+- `auditoria_vendas` — foto de cada venda (todas as situações) na última conferência.
+- `auditoria_alteracoes` — uma linha por venda alterada: `tipo` (o que mudou — fato) e
+  `motivo_sugerido` (por que — hipótese), receita/valor antes → depois no relatório de
+  Fechadas, vendedor/setor antes e depois, produto a produto (`produtos`), explicação e revisão.
+- `auditoria_execucoes` — uma por conferência, com a receita registrada por mês (`totais`).
+- **Aprendizado:** a revisão na aba (confirmar/corrigir o motivo) é um voto nas `chaves` da
+  alteração (tipo, direção, setor, produto, fornecedor, vendedor). O motivo seguinte num
+  contexto parecido = votos + regra (a regra pesa 2 votos). Precisão = sugestões confirmadas.
+- A primeira conferência só fotografa (`status='baseline'`). "Rodar agora" na aba chama a
+  função com `{force: true}` e a service role; a anon key só roda a conferência do dia.
 
 ---
 

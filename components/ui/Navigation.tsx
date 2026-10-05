@@ -22,14 +22,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-const NAV_ITEMS: { href: string; label: string; icon: LucideIcon; adminOnly?: boolean }[] = [
+const NAV_ITEMS: { href: string; label: string; icon: LucideIcon; adminOnly?: boolean; activePrefix?: string }[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/vendedores', label: 'Vendedores', icon: Users },
   { href: '/upload', label: 'Upload', icon: Upload, adminOnly: true },
   { href: '/metas', label: 'Metas', icon: Target, adminOnly: true },
   { href: '/metas-vendedor', label: 'Metas Vendedor', icon: UserCheck, adminOnly: true },
   { href: '/qualidade', label: 'Qualidade', icon: ShieldCheck },
-  { href: '/admin/usuarios', label: 'Admin', icon: Settings, adminOnly: true },
+  { href: '/admin/usuarios', label: 'Admin', icon: Settings, adminOnly: true, activePrefix: '/admin' },
 ]
 
 export function Navigation() {
@@ -101,7 +101,7 @@ export function Navigation() {
               href={item.href}
               title={collapsed ? item.label : undefined}
               className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-lg text-sm transition-colors relative ${
-                isActive(pathname, item.href)
+                isActive(pathname, item.activePrefix ?? item.href)
                   ? 'bg-slate-800 text-white font-medium border-l-2 border-blue-400'
                   : 'text-slate-300 hover:bg-slate-800 hover:text-white'
               }`}
@@ -187,7 +187,7 @@ export function Navigation() {
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                  isActive(pathname, item.href)
+                  isActive(pathname, item.activePrefix ?? item.href)
                     ? 'bg-slate-800 text-white font-medium border-l-2 border-blue-400'
                     : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                 }`}
